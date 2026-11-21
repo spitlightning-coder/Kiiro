@@ -29,7 +29,14 @@ def main() -> None:
     else:
         brain = Brain(load_personality(), model=config.model, effort=config.effort, max_tokens=config.max_tokens)
         logging.getLogger("dave").info("Gehirn: %s (Anthropic)", config.model)
-    Dave(config, brain).run(config.discord_token, log_handler=None)
+    store = None
+    if config.longterm:
+        from .longterm import MemoryStore
+
+        store = MemoryStore(config.data_dir)
+        logging.getLogger("dave").info("Langzeitgedächtnis in %s (lernt alle %d Nachrichten)",
+                                       config.data_dir, config.learn_every)
+    Dave(config, brain, store).run(config.discord_token, log_handler=None)
 
 
 if __name__ == "__main__":
