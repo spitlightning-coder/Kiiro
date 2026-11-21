@@ -3,7 +3,6 @@ REM Dave: einrichten (beim ersten Mal), Tests, starten. Ausgabe landet auch in l
 cd /d "%~dp0"
 if not exist logs mkdir logs
 if exist logs\crash.log del logs\crash.log
-if exist logs\dave.log del logs\dave.log
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8
 
