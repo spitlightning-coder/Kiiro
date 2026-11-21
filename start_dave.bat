@@ -2,6 +2,8 @@
 REM Dave: einrichten (beim ersten Mal), Tests, starten. Ausgabe landet auch in logs\.
 cd /d "%~dp0"
 if not exist logs mkdir logs
+if exist logs\crash.log del logs\crash.log
+if exist logs\dave.log del logs\dave.log
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8
 
@@ -30,5 +32,6 @@ type logs\tests.log
 
 echo.
 echo === Dave startet (Fenster offen lassen, Strg+C zum Beenden) ===
-.venv\Scripts\python.exe -u -m dave 2>&1 | powershell -NoProfile -Command "$input | Tee-Object -FilePath logs\dave.log"
+.venv\Scripts\python.exe -u -m dave 2>> logs\crash.log
+type logs\crash.log
 pause
