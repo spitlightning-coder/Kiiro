@@ -6,6 +6,7 @@ Mehrere Modelle möglich: zickt eins (Limit, Fehler, leere Antwort), kommt das n
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import re
@@ -50,11 +51,13 @@ class Provider:
     api_key: str
     models: list[str]
     client: object = None
-    timeout: float = 60
+    timeout: float = 25
 
 
 COOLDOWN_LIMIT = 10 * 60   # nach "Limit erreicht" so lange überspringen
 COOLDOWN_ERROR = 2 * 60    # nach Verbindungsfehler so lange überspringen
+COOLDOWN_BUSY = 5 * 60     # Modell überlastet (503) oder Zeitlimit -> so lange auslassen
+HEDGE_AFTER = 6.0          # so lange auf eine Antwort warten, bevor parallel ein zweiter Kandidat gefragt wird
 
 
 class OpenAIBrain:
@@ -75,6 +78,8 @@ class OpenAIBrain:
                 p.client = openai.AsyncOpenAI(base_url=p.base_url, api_key=p.api_key or "none",
                                               timeout=p.timeout, max_retries=0)
         self.cooldown: dict[str, float] = {}
+        self.model_cooldown: dict[tuple[str, str], float] = {}
+        self.hedge_after = HEDGE_AFTER
         self.used: dict[str, int] = {p.name: 0 for p in self.providers}
 
     @property
@@ -116,46 +121,96 @@ class OpenAIBrain:
                             + "\n(Hinweis: Das Bild dazu konntest du gerade nicht ansehen. Sag das kurz.)"}
         return await self._ask(messages, self.max_tokens)
 
-    async def _ask(self, messages: list[dict], max_tokens: int) -> str:
-        rate_limited = False
-        for provider in self.providers:
-            if self.cooldown.get(provider.name, 0) > self._clock():
-                rate_limited = True
-                continue
-            for model in provider.models:
-                started = time.monotonic()
-                try:
-                    response = await provider.client.chat.completions.create(
-                        model=model, messages=messages, max_tokens=max_tokens,
-                    )
-                except openai.RateLimitError:
-                    log.warning("%s: Limit erreicht bei %s", provider.name, model)
-                    rate_limited = True
-                    if model == provider.models[-1]:
-                        self.cooldown[provider.name] = self._clock() + COOLDOWN_LIMIT
-                        log.info("%s pausiert %d Min., nehme den nächsten Anbieter", provider.name, COOLDOWN_LIMIT // 60)
-                    continue
-                except openai.APIStatusError as e:
-                    log.error("%s: API-Fehler %s bei %s: %s", provider.name, e.status_code, model, e.message)
-                    if e.status_code in (401, 402, 403):  # Key falsch/Guthaben leer -> Anbieter länger auslassen
-                        self.cooldown[provider.name] = self._clock() + COOLDOWN_LIMIT
-                        break
-                    continue
-                except (openai.APIConnectionError, openai.APITimeoutError):
-                    log.error("%s: keine Verbindung (%s)", provider.name, model)
-                    self.cooldown[provider.name] = self._clock() + COOLDOWN_ERROR
-                    break
+    def _next(self, tried: set, skipped: set, busy_providers: set) -> tuple[Provider, str] | None:
+        """Nächster Kandidat (Anbieter, Modell). Beim Absichern lieber ein anderer Anbieter als der, der gerade hängt."""
+        now = self._clock()
+        options = [(p, m) for p in self.providers for m in p.models
+                   if (p.name, m) not in tried and p.name not in skipped
+                   and self.cooldown.get(p.name, 0) <= now and self.model_cooldown.get((p.name, m), 0) <= now]
+        if not options:
+            return None
+        other = [o for o in options if o[0].name not in busy_providers]
+        return (other or options)[0]
 
-                choice = response.choices[0] if response.choices else None
-                text = clean(choice.message.content or "") if choice else ""
-                if not text:
-                    log.warning("%s: leere Antwort von %s", provider.name, model)
+    async def _try(self, provider: Provider, model: str, messages: list[dict], max_tokens: int) -> tuple[str, str]:
+        started = time.monotonic()
+        try:
+            response = await provider.client.chat.completions.create(
+                model=model, messages=messages, max_tokens=max_tokens,
+            )
+        except openai.RateLimitError:
+            log.warning("%s: Limit erreicht bei %s", provider.name, model)
+            if model == provider.models[-1]:
+                self.cooldown[provider.name] = self._clock() + COOLDOWN_LIMIT
+                log.info("%s pausiert %d Min., nehme den nächsten Anbieter", provider.name, COOLDOWN_LIMIT // 60)
+            return "limit", ""
+        except openai.APIStatusError as e:
+            log.error("%s: API-Fehler %s bei %s: %s", provider.name, e.status_code, model, str(e.message)[:200])
+            if e.status_code in (401, 402, 403):  # Key falsch/Guthaben leer -> Anbieter länger auslassen
+                self.cooldown[provider.name] = self._clock() + COOLDOWN_LIMIT
+                return "skip", ""
+            if e.status_code >= 500:  # überlastet -> dieses Modell ein paar Minuten auslassen
+                self.model_cooldown[(provider.name, model)] = self._clock() + COOLDOWN_BUSY
+            return "error", ""
+        except openai.APITimeoutError:
+            log.error("%s: %s antwortet nicht (Zeitlimit)", provider.name, model)
+            self.model_cooldown[(provider.name, model)] = self._clock() + COOLDOWN_BUSY
+            return "error", ""
+        except openai.APIConnectionError:
+            log.error("%s: keine Verbindung (%s)", provider.name, model)
+            self.cooldown[provider.name] = self._clock() + COOLDOWN_ERROR
+            return "skip", ""
+        choice = response.choices[0] if response.choices else None
+        text = clean(choice.message.content or "") if choice else ""
+        if not text:
+            log.warning("%s: leere Antwort von %s", provider.name, model)
+            return "error", ""
+        if choice.finish_reason == "length":
+            text += " …"
+        self.used[provider.name] = self.used.get(provider.name, 0) + 1
+        log.info("Antwort von %s/%s in %.1f s", provider.name, model, time.monotonic() - started)
+        if provider is not self.providers[0]:
+            log.info("Antwort kam von Reserve %s (%s)", provider.name, model)
+        return "ok", text
+
+    async def _ask(self, messages: list[dict], max_tokens: int) -> str:
+        """Fragt die Kandidaten der Reihe nach. Hängt einer länger als HEDGE_AFTER, startet parallel der nächste
+        (möglichst bei einem anderen Anbieter) – die erste brauchbare Antwort gewinnt."""
+        now = self._clock()
+        rate_limited = any(self.cooldown.get(p.name, 0) > now for p in self.providers)
+        tried: set = set()
+        skipped: set = set()
+        pending: dict[asyncio.Task, Provider] = {}
+
+        def launch() -> bool:
+            cand = self._next(tried, skipped, {p.name for p in pending.values()})
+            if cand is None:
+                return False
+            provider, model = cand
+            tried.add((provider.name, model))
+            pending[asyncio.create_task(self._try(provider, model, messages, max_tokens))] = provider
+            return True
+
+        try:
+            launch()
+            while pending:
+                done, _ = await asyncio.wait(pending, timeout=self.hedge_after, return_when=asyncio.FIRST_COMPLETED)
+                if not done:
+                    if launch():
+                        log.info("Antwort dauert, frage parallel noch einen anderen")
                     continue
-                if choice.finish_reason == "length":
-                    text += " …"
-                self.used[provider.name] = self.used.get(provider.name, 0) + 1
-                log.info("Antwort von %s/%s in %.1f s", provider.name, model, time.monotonic() - started)
-                if provider is not self.providers[0]:
-                    log.info("Antwort kam von Reserve %s (%s)", provider.name, model)
-                return text
+                for task in done:
+                    provider = pending.pop(task)
+                    status, text = task.result()
+                    if status == "ok":
+                        return text
+                    if status == "limit":
+                        rate_limited = True
+                    if status == "skip":
+                        skipped.add(provider.name)
+                if not pending:
+                    launch()
+        finally:
+            for task in pending:
+                task.cancel()
         return LIMIT_ANTWORT if rate_limited else FEHLER_ANTWORT

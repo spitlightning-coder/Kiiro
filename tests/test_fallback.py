@@ -65,3 +65,51 @@ def test_fallbacks_from_env():
            "DAVE_FALLBACK3_NAME": "gemini", "DAVE_FALLBACK3_MODELS": "g"}  # 2: keine URL, 3: kein Key
     (p,) = fallbacks_from_env(env)
     assert p.name == "groq" and p.base_url == "https://api.groq.com/openai/v1" and p.models == ["a", "b"]
+
+
+class Slow(Fake):
+    def __init__(self, delay, *outcomes):
+        super().__init__(*outcomes)
+        self.delay, self.cancelled = delay, False
+
+    async def create(self, **kw):
+        import asyncio
+
+        self.calls.append(kw["model"])
+        try:
+            await asyncio.sleep(self.delay)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        return resp("langsam")
+
+
+def busy():
+    req = httpx.Request("POST", "https://x/v1/chat/completions")
+    return openai.InternalServerError("overloaded", response=httpx.Response(503, request=req), body=None)
+
+
+async def test_hedges_to_reserve_when_main_hangs():
+    main = Slow(5)
+    reserve = Fake(resp("schnell von der Reserve"))
+    b, _ = make(main, reserve)
+    b.hedge_after = 0.05
+    assert await b.reply(HIST, server="S", channel="c") == "schnell von der Reserve"
+    assert main.calls == ["m1"] and reserve.calls == ["rm"]  # Reserve statt m2 desselben Anbieters
+    import asyncio
+
+    await asyncio.sleep(0)  # Abbruch des hängenden Aufrufs greift im nächsten Schritt der Event-Loop
+    assert main.cancelled
+
+
+async def test_busy_model_is_skipped_for_a_while():
+    from dave.brain_openai import COOLDOWN_BUSY
+
+    main = Fake(busy(), resp("m2 springt ein"))
+    b, t = make(main)
+    assert await b.reply(HIST, server="S", channel="c") == "m2 springt ein"
+    await b.reply(HIST, server="S", channel="c")
+    assert main.calls == ["m1", "m2", "m2"]  # m1 ist überlastet -> erstmal ausgelassen
+    t[0] += COOLDOWN_BUSY + 1
+    await b.reply(HIST, server="S", channel="c")
+    assert main.calls[-1] == "m1"
