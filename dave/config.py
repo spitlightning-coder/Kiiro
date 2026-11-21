@@ -42,6 +42,9 @@ class Config:
     provider: str = "anthropic"          # anthropic | openai (OpenAI-kompatibel, z.B. Requesty)
     api_base: str = "https://router.requesty.ai/v1"
     api_key: str = ""
+    longterm: bool = True                # Langzeitgedächtnis (SQLite + ChromaDB)
+    data_dir: Path = ROOT / "data"
+    learn_every: int = 15                # nach so vielen neuen Nachrichten pro Kanal lernt Dave
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -69,6 +72,9 @@ class Config:
             memory_minutes=_int("DAVE_MEMORY_MINUTES", cls.memory_minutes),
             dave_channel_ids=_ids("DAVE_CHANNEL_IDS"),
             reply_to_bots=_bool("DAVE_REPLY_TO_BOTS", False),
+            longterm=_bool("DAVE_LONGTERM", True),
+            data_dir=Path(os.getenv("DAVE_DATA_DIR", "").strip() or ROOT / "data"),
+            learn_every=max(5, _int("DAVE_LEARN_EVERY", cls.learn_every)),
         )
 
 
