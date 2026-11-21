@@ -193,11 +193,13 @@ class Actions:
 
     # ---------- Rollen ----------
 
-    async def toggle_roles(self, member: discord.Member, wanted: set[int]) -> list[str]:
+    async def toggle_roles(self, member: discord.Member, wanted: set[int], scope: set[int] | None = None) -> list[str]:
         guild, me = member.guild, member.guild.me
         allowed = self.data.self_roles(guild.id)
         results = []
         for rid in allowed:
+            if scope is not None and rid not in scope:
+                continue
             role = guild.get_role(rid)
             if role is None:
                 continue
@@ -236,7 +238,7 @@ class Actions:
         member = interaction.guild.get_member(interaction.user.id) or interaction.user
         allowed = self.data.self_roles(interaction.guild.id)
         has = {r.id for r in member.roles if r.id in allowed}
-        results = await self.toggle_roles(member, has ^ {rid})
+        results = await self.toggle_roles(member, has ^ {rid}, scope={rid})
         await interaction.followup.send("\n".join(results), ephemeral=True)
         return True
 
@@ -252,13 +254,15 @@ class Actions:
             if actions.stopped(guild):
                 await interaction.response.send_message("Ich bin gerade per Notbremse gestoppt.", ephemeral=True)
                 return
-            roles = [r for r in (guild.get_role(i) for i in actions.data.self_roles(guild.id)) if r][:25]
+            from .extras import group_roles
+            grouped = group_roles(guild, actions.data.self_roles(guild.id), actions.role_groups)[:5]
+            roles = [r for _t, rs in grouped for r in rs]
             if not roles:
                 await interaction.response.send_message("Hier sind noch keine Rollen zur Selbstwahl freigegeben.",
                                                         ephemeral=True)
                 return
-            await interaction.response.send_message("Wähl aus, welche Rollen du haben willst:",
-                                                    view=RoleView(actions, interaction.user, roles), ephemeral=True)
+            await interaction.response.send_message("Wähl pro Gruppe aus, welche Rollen du haben willst:",
+                                                    view=RoleView(actions, interaction.user, grouped), ephemeral=True)
 
         @tree.command(name="erinnerung", description="Dave erinnert dich an etwas")
         @app_commands.describe(wann="z.B. 'in 30 Minuten', 'um 18:30', 'morgen um 9', 'am 24.12. um 18 Uhr'",
@@ -485,23 +489,27 @@ class Actions:
 
 
 class RoleView(discord.ui.View):
-    def __init__(self, actions: Actions, member: discord.Member, roles: list[discord.Role]):
-        super().__init__(timeout=120)
-        self.actions, self.member = actions, member
-        select = discord.ui.Select(
-            placeholder="Rollen auswählen …", min_values=0, max_values=len(roles),
-            options=[discord.SelectOption(label=r.name[:100], value=str(r.id), default=r in member.roles)
-                     for r in roles])
-        select.callback = self._chosen
-        self.add_item(select)
-        self.select = select
+    """/rollen: ein Auswahlmenü pro Gruppe, vorausgewählt ist, was man schon hat."""
 
-    async def _chosen(self, interaction: discord.Interaction):
-        if interaction.user.id != self.member.id:
-            await interaction.response.send_message("Das ist nicht dein Menü.", ephemeral=True)
-            return
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        member = interaction.guild.get_member(self.member.id) or self.member
-        results = await self.actions.toggle_roles(member, {int(v) for v in self.select.values})
-        await interaction.followup.send("\n".join(results), ephemeral=True)
-        self.stop()
+    def __init__(self, actions: Actions, member: discord.Member, grouped: list):
+        super().__init__(timeout=180)
+        self.actions, self.member = actions, member
+        for title, roles in grouped:
+            roles = roles[:25]
+            select = discord.ui.Select(
+                placeholder=title[:100], min_values=0, max_values=len(roles),
+                options=[discord.SelectOption(label=r.name[:100], value=str(r.id), default=r in member.roles)
+                         for r in roles])
+            select.callback = self._make_callback(select, {r.id for r in roles})
+            self.add_item(select)
+
+    def _make_callback(self, select: discord.ui.Select, scope: set[int]):
+        async def callback(interaction: discord.Interaction):
+            if interaction.user.id != self.member.id:
+                await interaction.response.send_message("Das ist nicht dein Menü.", ephemeral=True)
+                return
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            member = interaction.guild.get_member(self.member.id) or self.member
+            results = await self.actions.toggle_roles(member, {int(v) for v in select.values}, scope=scope)
+            await interaction.followup.send("\n".join(results), ephemeral=True)
+        return callback

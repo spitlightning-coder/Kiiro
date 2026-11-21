@@ -177,26 +177,58 @@ def roles_embed(guild: discord.Guild, role_ids: list[int], groups=()) -> discord
     return embed
 
 
+GROUP_COLORS = [0xFEE75C, 0x5865F2, 0x57F287, 0xEB459E, 0xED4245, 0x9B59B6, 0x1ABC9C]
+
+
 async def refresh_role_message(guild: discord.Guild, data: ServerData, groups=()) -> None:
-    """Hält die Knopf-Nachricht im Selfroles-Kanal aktuell (anlegen oder bearbeiten)."""
+    """Hält die Rollen-Nachrichten im Selfroles-Kanal aktuell: eine Nachricht pro Gruppe (je max. 25 Knöpfe)."""
     cid = data.get(guild.id, "roles_channel")
     channel = guild.get_channel(cid) if cid else discord.utils.find(lambda c: c.name.endswith("selfroles"),
                                                                     guild.text_channels)
     if channel is None or not channel.permissions_for(guild.me).send_messages:
         return
     ids = data.self_roles(guild.id)
-    embed, view = roles_embed(guild, ids, groups), role_buttons(guild, ids, groups)
-    mid = data.get(guild.id, "roles_message")
-    try:
+    grouped = group_roles(guild, ids, list(groups))
+    stored: dict = data.get(guild.id, "roles_messages", {})
+    old_single = data.get(guild.id, "roles_message")
+    if old_single:  # alte Einzel-Nachricht aus früheren Versionen aufräumen
+        try:
+            await (await channel.fetch_message(old_single)).delete()
+        except discord.HTTPException:
+            pass
+        data.set(guild.id, "roles_message", None)
+    if not grouped:
+        grouped = [("Rollen", [])]
+    new_stored = {}
+    for n, (title, roles) in enumerate(grouped):
+        embed = discord.Embed(title=f"{title}", color=GROUP_COLORS[n % len(GROUP_COLORS)])
+        if roles:
+            embed.description = "Knopf drücken = Rolle nehmen · nochmal drücken = wieder weg\n\n" + \
+                " ".join(r.mention for r in roles)
+        else:
+            embed.description = "Hier gibt's bald Rollen. Admins geben sie mit `/dave rolle_freigeben` frei."
+        if n == 0:
+            embed.set_author(name="「👫」Such dir deine Rollen aus")
+        view = role_buttons(guild, [r.id for r in roles], [(title, [r.name for r in roles])])
+        msg = None
+        mid = stored.get(title)
         if mid:
-            msg = await channel.fetch_message(mid)
-            await msg.edit(embed=embed, view=view)
-            return
-    except discord.HTTPException:
-        pass  # Nachricht weg -> neu anlegen
-    msg = await channel.send(embed=embed, view=view)
-    data.set(guild.id, "roles_message", msg.id)
-    log.info("Selfroles-Nachricht in #%s angelegt", channel.name)
+            try:
+                msg = await channel.fetch_message(mid)
+                await msg.edit(embed=embed, view=view)
+            except discord.HTTPException:
+                msg = None
+        if msg is None:
+            msg = await channel.send(embed=embed, view=view)
+            log.info("Rollen-Nachricht „%s“ in #%s angelegt", title, channel.name)
+        new_stored[title] = msg.id
+    for title, mid in stored.items():  # Gruppen, die es nicht mehr gibt
+        if title not in new_stored:
+            try:
+                await (await channel.fetch_message(mid)).delete()
+            except discord.HTTPException:
+                pass
+    data.set(guild.id, "roles_messages", new_stored)
 
 
 def register_fun(tree: app_commands.CommandTree) -> None:

@@ -140,7 +140,8 @@ class FreeGames:
         return None
 
     def ping_role(self, guild: discord.Guild) -> discord.Role | None:
-        return discord.utils.find(lambda r: norm(r.name) in ("news-ping", "gratis-spiele"), guild.roles)
+        return discord.utils.find(lambda r: norm(r.name) == "gratis-spiele", guild.roles) or \
+            discord.utils.find(lambda r: norm(r.name) == "news-ping", guild.roles)
 
     def start(self) -> None:
         if self._task is None or self._task.done():
