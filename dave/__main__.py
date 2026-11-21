@@ -62,7 +62,11 @@ def main() -> None:
     from .serverdata import ServerData
 
     server = ServerData(config.data_dir)
-    Dave(config, brain, store, server).run(config.discord_token, log_handler=None)
+    dave = Dave(config, brain, store, server)
+    dave.run(config.discord_token, log_handler=None)
+    if dave.reload_requested:
+        lock.close()
+        sys.exit(3)  # 3 = "bitte sofort neu starten" für dave_dienst.bat
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 import discord
 from discord import app_commands
 
+from .extras import ROLE_BUTTON_PREFIX, refresh_role_message
 from .serverdata import ServerData
 from .zeit import describe, parse_reminder, parse_when
 
@@ -71,13 +72,17 @@ class Actions:
         self.data = data
         self.role_limit = RateLimit(ROLE_CHANGES_PER_HOUR)
         self._reminder_task: asyncio.Task | None = None
+        self.news = None  # wird vom Bot gesetzt
+        self.role_groups: list = []
+        self.proactive = None  # wird vom Bot gesetzt  # Gruppen für die Selfroles-Nachricht (aus DAVE_SELFROLES)
         self._register(tree)
 
     # ---------- Log ----------
 
     def _log_channel(self, guild: discord.Guild) -> discord.TextChannel | None:
         cid = self.data.get(guild.id, "log_channel")
-        channel = guild.get_channel(cid) if cid else discord.utils.get(guild.text_channels, name=LOG_CHANNEL_NAME)
+        channel = guild.get_channel(cid) if cid else discord.utils.find(
+            lambda c: c.name.endswith(LOG_CHANNEL_NAME), guild.text_channels)  # findet auch „「📋」dave-log“
         if channel and channel.permissions_for(guild.me).send_messages:
             return channel
         return None
@@ -96,11 +101,18 @@ class Actions:
 
     # ---------- Begrüßung ----------
 
+    def welcome_channel(self, guild: discord.Guild) -> discord.TextChannel | None:
+        cid = self.data.get(guild.id, "welcome_channel")
+        if cid:
+            return guild.get_channel(cid)
+        return discord.utils.find(lambda c: c.name.endswith(("ankunft", "welcome", "willkommen", "welcome-and-bye")),
+                                  guild.text_channels)
+
     async def greet(self, member: discord.Member, brain) -> None:
         guild = member.guild
-        if member.bot or self.stopped(guild) or not self.data.get(guild.id, "welcome_on", False):
+        if member.bot or self.stopped(guild) or not self.data.get(guild.id, "welcome_on", True):
             return
-        channel = guild.get_channel(self.data.get(guild.id, "welcome_channel") or 0)
+        channel = self.welcome_channel(guild)
         if not isinstance(channel, discord.TextChannel) or not channel.permissions_for(guild.me).send_messages:
             log.warning("Begrüßungskanal fehlt oder kein Schreibrecht auf %s", guild.name)
             return
@@ -211,6 +223,23 @@ class Actions:
                 results.append(f"❌ Discord lässt mich „{role.name}“ nicht vergeben.")
         return results or ["Nichts geändert."]
 
+    async def role_button(self, interaction: discord.Interaction) -> bool:
+        """Klick auf einen Knopf der Selfroles-Nachricht. True, wenn es einer war."""
+        cid = (interaction.data or {}).get("custom_id", "")
+        if not cid.startswith(ROLE_BUTTON_PREFIX) or interaction.guild is None:
+            return False
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        if self.stopped(interaction.guild):
+            await interaction.followup.send("Ich bin gerade per Notbremse gestoppt.", ephemeral=True)
+            return True
+        rid = int(cid[len(ROLE_BUTTON_PREFIX):])
+        member = interaction.guild.get_member(interaction.user.id) or interaction.user
+        allowed = self.data.self_roles(interaction.guild.id)
+        has = {r.id for r in member.roles if r.id in allowed}
+        results = await self.toggle_roles(member, has ^ {rid})
+        await interaction.followup.send("\n".join(results), ephemeral=True)
+        return True
+
     # ---------- Slash-Befehle ----------
 
     def _register(self, tree: app_commands.CommandTree) -> None:
@@ -296,16 +325,21 @@ class Actions:
             if not await is_admin(interaction):
                 return
             g, d = interaction.guild, actions.data
-            welcome = g.get_channel(d.get(g.id, "welcome_channel") or 0)
+            welcome = actions.welcome_channel(g)
             roles = [g.get_role(r) for r in d.self_roles(g.id)]
             logch = actions._log_channel(g)
             lines = [
                 f"Notbremse: {'🛑 gezogen' if d.stopped(g.id) else '✅ aus'}",
-                f"Begrüßung: {'an' if d.get(g.id, 'welcome_on', False) else 'aus'}"
+                f"Begrüßung: {'an' if d.get(g.id, 'welcome_on', True) else 'aus'}"
                 f"{f' in #{welcome.name}' if welcome else ''}",
                 "Selbstwahl-Rollen: " + (", ".join(r.name for r in roles if r) or "keine"),
                 f"Log-Kanal: {('#' + logch.name) if logch else 'keiner (nur Logdatei)'}",
                 f"Rollen verwalten: {'✅' if g.me.guild_permissions.manage_roles else '❌ fehlt'}",
+                f"News: {'an' if d.get(g.id, 'news_on', True) else 'aus'}"
+                f"{(' in #' + actions.news.channel(g).name) if actions.news and actions.news.channel(g) else ' (kein Kanal)'}"
+                f", {len(actions.news.feeds(g.id)) if actions.news else 0} Quellen",
+                f"Proaktiv: {actions.proactive.mode(g.id) if actions.proactive else '-'}"
+                f" ({actions.proactive.posts_today(g.id) if actions.proactive else 0}/6 heute)",
             ]
             await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
@@ -317,7 +351,7 @@ class Actions:
             g = interaction.guild
             if kanal:
                 actions.data.set(g.id, "welcome_channel", kanal.id)
-            if an and not actions.data.get(g.id, "welcome_channel"):
+            if an and not actions.welcome_channel(g):
                 await interaction.response.send_message("Sag mir noch den Kanal: /dave begruessung an:True kanal:#…",
                                                         ephemeral=True)
                 return
@@ -338,6 +372,7 @@ class Actions:
             await interaction.response.send_message(f"„{rolle.name}“ kann man sich jetzt mit /rollen nehmen.",
                                                     ephemeral=True)
             await actions.audit(g, f"⚙️ Rolle {rolle.name} freigegeben von {interaction.user}")
+            await refresh_role_message(g, actions.data, actions.role_groups)
 
         @admin.command(name="rolle_sperren", description="Nimmt eine Rolle aus /rollen raus")
         async def rolle_sperren(interaction: discord.Interaction, rolle: discord.Role):
@@ -346,6 +381,7 @@ class Actions:
             actions.data.set_self_role(interaction.guild_id, rolle.id, False)
             await interaction.response.send_message(f"„{rolle.name}“ ist nicht mehr wählbar.", ephemeral=True)
             await actions.audit(interaction.guild, f"⚙️ Rolle {rolle.name} gesperrt von {interaction.user}")
+            await refresh_role_message(interaction.guild, actions.data, actions.role_groups)
 
         @admin.command(name="logkanal", description="Legt fest, wohin Dave seine Aktionen loggt")
         async def logkanal(interaction: discord.Interaction, kanal: discord.TextChannel):
@@ -357,6 +393,92 @@ class Actions:
             actions.data.set(interaction.guild_id, "log_channel", kanal.id)
             await interaction.response.send_message(f"Ich logge ab jetzt in #{kanal.name}.", ephemeral=True)
             await actions.audit(interaction.guild, f"⚙️ Log-Kanal gesetzt von {interaction.user}")
+
+        @admin.command(name="news", description="Automatische News an/aus")
+        @app_commands.describe(an="News an oder aus", kanal="Wohin die News kommen (sonst der Kanal mit 'news' im Namen)")
+        async def news_cmd(interaction: discord.Interaction, an: bool, kanal: discord.TextChannel | None = None):
+            if not await is_admin(interaction):
+                return
+            if kanal:
+                actions.data.set(interaction.guild_id, "news_channel", kanal.id)
+            actions.data.set(interaction.guild_id, "news_on", an)
+            await interaction.response.send_message(f"News sind jetzt {'an' if an else 'aus'}.", ephemeral=True)
+            await actions.audit(interaction.guild, f"⚙️ News {'an' if an else 'aus'} von {interaction.user}")
+
+        @admin.command(name="news_quellen", description="Zeigt die News-Quellen")
+        async def news_quellen(interaction: discord.Interaction):
+            if not await is_admin(interaction):
+                return
+            feeds = actions.news.feeds(interaction.guild_id) if actions.news else []
+            await interaction.response.send_message("News-Quellen:\n" + "\n".join(f"• <{f}>" for f in feeds),
+                                                    ephemeral=True)
+
+        @admin.command(name="news_quelle_hinzu", description="Fügt einen RSS-Feed hinzu")
+        async def news_quelle_hinzu(interaction: discord.Interaction, url: str):
+            if not await is_admin(interaction):
+                return
+            if not url.startswith(("http://", "https://")) or not actions.news:
+                await interaction.response.send_message("Das ist keine gültige Adresse.", ephemeral=True)
+                return
+            feeds = list(actions.news.feeds(interaction.guild_id))
+            if url not in feeds:
+                feeds.append(url)
+            actions.data.set(interaction.guild_id, "news_feeds", feeds[:15])
+            await interaction.response.send_message(f"Quelle hinzugefügt ({len(feeds)} insgesamt).", ephemeral=True)
+            await actions.audit(interaction.guild, f"⚙️ News-Quelle hinzu von {interaction.user}: {url}")
+
+        @admin.command(name="news_quelle_weg", description="Entfernt einen RSS-Feed")
+        async def news_quelle_weg(interaction: discord.Interaction, url: str):
+            if not await is_admin(interaction):
+                return
+            feeds = [f for f in (actions.news.feeds(interaction.guild_id) if actions.news else []) if f != url]
+            actions.data.set(interaction.guild_id, "news_feeds", feeds)
+            await interaction.response.send_message(f"Erledigt, noch {len(feeds)} Quellen.", ephemeral=True)
+            await actions.audit(interaction.guild, f"⚙️ News-Quelle entfernt von {interaction.user}: {url}")
+
+        @admin.command(name="gratis_spiele", description="Gratis-Spiele-Alarm an/aus")
+        @app_commands.describe(an="An oder aus", kanal="Wohin (sonst Kanal mit 'gratis' im Namen bzw. News-Kanal)")
+        async def gratis_spiele(interaction: discord.Interaction, an: bool, kanal: discord.TextChannel | None = None):
+            if not await is_admin(interaction):
+                return
+            if kanal:
+                actions.data.set(interaction.guild_id, "freegames_channel", kanal.id)
+            actions.data.set(interaction.guild_id, "freegames_on", an)
+            await interaction.response.send_message(f"Gratis-Spiele-Alarm ist jetzt {'an' if an else 'aus'}.",
+                                                    ephemeral=True)
+            await actions.audit(interaction.guild, f"⚙️ Gratis-Spiele {'an' if an else 'aus'} von {interaction.user}")
+
+        @admin.command(name="proaktiv", description="Ob Dave von sich aus schreibt: aus, test (nur Log) oder an")
+        @app_commands.choices(modus=[app_commands.Choice(name="aus", value="aus"),
+                                     app_commands.Choice(name="test (Ideen nur in #dave-log)", value="test"),
+                                     app_commands.Choice(name="an", value="an")])
+        async def proaktiv(interaction: discord.Interaction, modus: app_commands.Choice[str]):
+            if not await is_admin(interaction):
+                return
+            actions.data.set(interaction.guild_id, "proactive_mode", modus.value)
+            chans = actions.proactive.channels(interaction.guild) if actions.proactive else []
+            await interaction.response.send_message(
+                f"Proaktives Schreiben: **{modus.value}**. Kanäle: "
+                f"{', '.join('#' + c.name for c in chans) or 'keine'} (ändern mit /dave proaktiv_kanal).",
+                ephemeral=True)
+            await actions.audit(interaction.guild, f"⚙️ Proaktiv: {modus.value} von {interaction.user}")
+
+        @admin.command(name="proaktiv_kanal", description="Kanal für proaktive Nachrichten erlauben/sperren")
+        async def proaktiv_kanal(interaction: discord.Interaction, kanal: discord.TextChannel, an: bool):
+            if not await is_admin(interaction) or not actions.proactive:
+                return
+            actions.proactive.set_channel(interaction.guild, kanal.id, an)
+            chans = actions.proactive.channels(interaction.guild)
+            await interaction.response.send_message(
+                f"Okay. Proaktive Kanäle: {', '.join('#' + c.name for c in chans) or 'keine'}", ephemeral=True)
+
+        @admin.command(name="proaktiv_jetzt", description="Testet proaktives Schreiben sofort (ignoriert die Pausen)")
+        async def proaktiv_jetzt(interaction: discord.Interaction):
+            if not await is_admin(interaction) or not actions.proactive:
+                return
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            result = await actions.proactive.try_post(interaction.guild, force=True)
+            await interaction.followup.send(f"Ergebnis: {result}", ephemeral=True)
 
         tree.add_command(admin)
 

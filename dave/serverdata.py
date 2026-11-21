@@ -30,6 +30,39 @@ CREATE TABLE IF NOT EXISTS reminders (
     done INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS reminders_due ON reminders(done, due_at);
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY,
+    guild_id INTEGER NOT NULL,
+    channel_id INTEGER NOT NULL,
+    message_id INTEGER,
+    creator_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    details TEXT NOT NULL DEFAULT '',
+    starts_at REAL NOT NULL,
+    role_id INTEGER,
+    stage INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS event_rsvp (
+    event_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    PRIMARY KEY (event_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS quiz_scores (
+    guild_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    points INTEGER NOT NULL DEFAULT 0,
+    correct INTEGER NOT NULL DEFAULT 0,
+    answered INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS news_seen (
+    guild_id INTEGER NOT NULL,
+    item_id TEXT NOT NULL,
+    seen_at REAL NOT NULL,
+    PRIMARY KEY (guild_id, item_id)
+);
 """
 
 
@@ -115,6 +148,92 @@ class ServerData:
                                   "AND done = 0", (reminder_id, guild_id, user_id))
             self.db.commit()
             return cur.rowcount > 0
+
+    # ---------- Events ----------
+
+    def add_event(self, guild_id: int, channel_id: int, creator_id: int, title: str, details: str,
+                  starts_at: float, role_id: int | None) -> int:
+        with self._lock:
+            cur = self.db.execute("INSERT INTO events (guild_id, channel_id, creator_id, title, details, starts_at, role_id) "
+                                  "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                  (guild_id, channel_id, creator_id, title[:200], details[:800], starts_at, role_id))
+            self.db.commit()
+            return cur.lastrowid
+
+    def set_event_message(self, event_id: int, message_id: int) -> None:
+        with self._lock:
+            self.db.execute("UPDATE events SET message_id = ? WHERE id = ?", (message_id, event_id))
+            self.db.commit()
+
+    def get_event(self, event_id: int) -> dict | None:
+        with self._lock:
+            row = self.db.execute("SELECT id, guild_id, channel_id, message_id, creator_id, title, details, starts_at, "
+                                  "role_id, stage FROM events WHERE id = ?", (event_id,)).fetchone()
+        keys = ("id", "guild_id", "channel_id", "message_id", "creator_id", "title", "details", "starts_at",
+                "role_id", "stage")
+        return dict(zip(keys, row)) if row else None
+
+    def due_events(self, now: float) -> list[dict]:
+        """Events, bei denen die 15-Minuten-Erinnerung (stage 0) oder der Start (stage 1) fällig ist."""
+        with self._lock:
+            ids = [r[0] for r in self.db.execute(
+                "SELECT id FROM events WHERE (stage = 0 AND starts_at - 900 <= ?) OR (stage = 1 AND starts_at <= ?)",
+                (now, now)).fetchall()]
+        return [e for e in (self.get_event(i) for i in ids) if e]
+
+    def set_event_stage(self, event_id: int, stage: int) -> None:
+        with self._lock:
+            self.db.execute("UPDATE events SET stage = ? WHERE id = ?", (stage, event_id))
+            self.db.commit()
+
+    def rsvp(self, event_id: int, user_id: int, status: str | None) -> None:
+        with self._lock:
+            if status is None:
+                self.db.execute("DELETE FROM event_rsvp WHERE event_id = ? AND user_id = ?", (event_id, user_id))
+            else:
+                self.db.execute("INSERT INTO event_rsvp (event_id, user_id, status) VALUES (?, ?, ?) "
+                                "ON CONFLICT(event_id, user_id) DO UPDATE SET status = excluded.status",
+                                (event_id, user_id, status))
+            self.db.commit()
+
+    def rsvps(self, event_id: int) -> dict[str, list[int]]:
+        with self._lock:
+            rows = self.db.execute("SELECT user_id, status FROM event_rsvp WHERE event_id = ?", (event_id,)).fetchall()
+        out: dict[str, list[int]] = {"ja": [], "vielleicht": [], "nein": []}
+        for uid, status in rows:
+            out.setdefault(status, []).append(uid)
+        return out
+
+    # ---------- Quiz ----------
+
+    def add_quiz_result(self, guild_id: int, user_id: int, name: str, points: int, correct: bool) -> None:
+        with self._lock:
+            self.db.execute(
+                "INSERT INTO quiz_scores (guild_id, user_id, name, points, correct, answered) VALUES (?, ?, ?, ?, ?, 1) "
+                "ON CONFLICT(guild_id, user_id) DO UPDATE SET name = excluded.name, points = points + excluded.points, "
+                "correct = correct + excluded.correct, answered = answered + 1",
+                (guild_id, user_id, name[:64], points, int(correct)))
+            self.db.commit()
+
+    def quiz_top(self, guild_id: int, limit: int = 10) -> list[tuple[str, int, int, int]]:
+        with self._lock:
+            return self.db.execute("SELECT name, points, correct, answered FROM quiz_scores WHERE guild_id = ? "
+                                   "ORDER BY points DESC, correct DESC LIMIT ?", (guild_id, limit)).fetchall()
+
+    # ---------- News ----------
+
+    def news_seen(self, guild_id: int, item_id: str) -> bool:
+        with self._lock:
+            return self.db.execute("SELECT 1 FROM news_seen WHERE guild_id = ? AND item_id = ?",
+                                   (guild_id, item_id)).fetchone() is not None
+
+    def mark_news(self, guild_id: int, item_ids: list[str]) -> None:
+        now = self._clock()
+        with self._lock:
+            self.db.executemany("INSERT OR IGNORE INTO news_seen (guild_id, item_id, seen_at) VALUES (?, ?, ?)",
+                                [(guild_id, i, now) for i in item_ids])
+            self.db.execute("DELETE FROM news_seen WHERE seen_at < ?", (now - 90 * 86400,))
+            self.db.commit()
 
     def close(self) -> None:
         with self._lock:

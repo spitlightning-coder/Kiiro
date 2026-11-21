@@ -45,6 +45,8 @@ class Config:
     longterm: bool = True                # Langzeitgedächtnis (SQLite + ChromaDB)
     data_dir: Path = ROOT / "data"
     learn_every: int = 15                # nach so vielen neuen Nachrichten pro Kanal lernt Dave
+    selfroles: str = ""                  # "Pings: News-Ping, Event-Ping | Spiele: GTA, …" – wird einmal freigegeben
+    autoreload: bool = True              # bei geändertem Code neu starten (der Dienst startet ihn wieder)
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -75,6 +77,8 @@ class Config:
             longterm=_bool("DAVE_LONGTERM", True),
             data_dir=Path(os.getenv("DAVE_DATA_DIR", "").strip() or ROOT / "data"),
             learn_every=max(5, _int("DAVE_LEARN_EVERY", cls.learn_every)),
+            autoreload=_bool("DAVE_AUTORELOAD", True),
+            selfroles=os.getenv("DAVE_SELFROLES", "").strip(),
         )
 
 

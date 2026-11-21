@@ -64,11 +64,34 @@ Der Code entscheidet, nicht das Sprachmodell. Jede Aktion läuft durch eine Prü
 - **Begrüßung:** `/dave begruessung an:True kanal:#…` – Dave begrüßt neue Mitglieder kurz und persönlich.
 - **Notbremse:** `/dave stopp` hält Dave sofort komplett an, `/dave weiter` löst sie. `/dave status` zeigt alle Einstellungen.
 
+## Community-Funktionen
+
+- **News:** Alle 20 Minuten neue Artikel per RSS in den Kanal mit „news“ im Namen (PC Games Hardware, Golem, Spektrum, UploadVR). Kein KI-Aufruf. `/dave news`, `/dave news_quellen`, `/dave news_quelle_hinzu`, `/dave news_quelle_weg`.
+- **Counting:** Im Kanal mit „counting“ im Namen zählt der Server gemeinsam hoch. ✅/❌, Rekord wird gespeichert.
+- **Selfroles:** Im Kanal mit „selfroles“ im Namen pflegt Dave eine Nachricht mit Rollen-Knöpfen, gruppiert nach `DAVE_SELFROLES` (z.B. `Pings: News-Ping | Spiele: GTA, Minecraft`). Diese Rollen gibt er beim ersten Start einmal automatisch frei.
+- **Für alle:** `/hilfe`, `/wuerfel`, `/muenze`, `/umfrage`.
+- **Begrüßung:** automatisch im Kanal mit „ankunft“/„welcome“ im Namen (abschaltbar mit `/dave begruessung an:False`).
+
+- **Gratis-Spiele:** Stündlich neue Gratis-Games (Epic-Store-Schnittstelle + GamerPower für Steam, GOG …) in den Kanal mit „gratis“ im Namen, mit Ping an die News-Ping-Rolle. `/dave gratis_spiele`.
+- **Quiz:** `/quiz [thema] [fragen]` – Multiple Choice mit Knöpfen, 20 s pro Frage, Punkte und `/quiz_rangliste`. Fragen von der KI (1 Anfrage pro Quiz), sonst aus der eingebauten Sammlung.
+
+## Proaktives Schreiben
+
+Dave meldet sich ab und zu von selbst in den freigegebenen Kanälen (Standard: main-chat): höchstens 1× pro Kanal alle 2 h und 6× pro Tag, nie zwischen 23 und 8 Uhr, nie wenn gerade jemand schreibt, pingt niemanden.
+
+- `/dave proaktiv modus:test` (Standard) – Ideen landen nur in `#dave-log`. `an` – er schreibt wirklich. `aus` – nie.
+- `/dave proaktiv_kanal` – Kanäle erlauben/sperren. `/dave proaktiv_jetzt` – sofort einmal testen.
+
+## GitHub
+
+`github_hochladen.bat` lädt den aktuellen Stand nach github.com/spitlightning-coder/Kiiro hoch (ohne `.env`, `data/`, `logs/`). Beim ersten Mal fragt Git evtl. nach dem GitHub-Login.
+
 ## Autostart (Windows)
 
 - `autostart_an.bat` – Dave startet ab jetzt beim Windows-Login unsichtbar im Hintergrund (und sofort). Stürzt er ab, startet er nach 30 s neu.
 - `dave_stoppen.bat` – beendet ihn. `autostart_aus.bat` – nimmt ihn wieder aus dem Autostart.
 - Dave läuft nie doppelt: Eine zweite Instanz beendet sich sofort von selbst.
+- **Selbst-Update:** Ändert sich Code, Persönlichkeit oder `.env`, startet Dave nach ~25 s von selbst neu (`DAVE_AUTORELOAD=false` schaltet das ab).
 
 ## Persönlichkeit
 
@@ -85,6 +108,11 @@ Steht in [`prompts/persoenlichkeit.md`](prompts/persoenlichkeit.md). Einfach bea
 - `dave/actions.py` – Server-Aktionen, Prüfkette, Log, Notbremse.
 - `dave/serverdata.py` – Einstellungen und Erinnerungen (SQLite).
 - `dave/zeit.py` – versteht deutsche Zeitangaben.
+- `dave/news.py` – News per RSS/Atom.
+- `dave/extras.py` – Counting, Selfroles-Knöpfe, /hilfe, /wuerfel, /muenze, /umfrage.
+- `dave/freegames.py` – Gratis-Spiele-Alarm.
+- `dave/quiz.py` – Quiz mit Rangliste.
+- `dave/proactive.py` – proaktives Schreiben mit Limits und Testmodus.
 - `dave/config.py` – liest die `.env`.
 
 ## Tests

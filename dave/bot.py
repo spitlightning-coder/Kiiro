@@ -5,22 +5,29 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
+from pathlib import Path
 
 import discord
 from discord import app_commands
 
-from .actions import Actions
-from .config import Config
+from .actions import Actions, role_problem
+from .community import Events, TempVoice, register_events, register_summary
+from .config import ROOT, Config
+from .extras import Counting, norm, parse_groups, refresh_role_message, register_fun
 from .learning import Learner, Line, build_context, parse_merk_dir
 from .longterm import MemoryStore
 from .memory import ChannelMemory
+from .freegames import FreeGames
+from .news import News
+from .proactive import Proactive
+from .quiz import Quiz, register_quiz
 from .serverdata import ServerData
 
 log = logging.getLogger("dave.bot")
 
 DISCORD_LIMIT = 2000
 INVITE = ("https://discord.com/oauth2/authorize?client_id={id}&scope=bot+applications.commands"
-          "&permissions=275146427392")
+          "&permissions=275163204624")
 
 
 def split_message(text: str, limit: int = DISCORD_LIMIT) -> list[str]:
@@ -83,10 +90,90 @@ class Dave(discord.Client):
         if store:
             self._register_commands()
         self.actions = Actions(self, server, self.tree) if server else None
+        self.news = News(self, server, self.actions) if server else None
+        if self.actions:
+            self.actions.news = self.news
+            self.actions.role_groups = parse_groups(config.selfroles)
+        self.counting = Counting(server) if server else None
+        self.freegames = FreeGames(self, server, self.actions, self.news) if server else None
+        self.proactive = Proactive(self, server, brain, self.actions, store) if server else None
+        self.tempvoice = TempVoice(self, server, self.actions) if server else None
+        self.events = Events(self, server, self.actions) if server else None
+        if server:
+            register_events(self.tree, self.events)
+            register_summary(self.tree, brain, self.actions)
+        if self.actions:
+            self.actions.proactive = self.proactive
+        register_fun(self.tree)
+        if server:
+            register_quiz(self.tree, Quiz(server, brain, self.actions))
+        self.reload_requested = False
 
     async def setup_hook(self) -> None:
         if self.actions:
             self.actions.start_reminder_loop()
+        if self.news:
+            self.news.start()
+        if self.freegames:
+            self.freegames.start()
+        if self.proactive:
+            self.proactive.start()
+        if self.events:
+            self.events.start()
+        if self.config.autoreload:
+            asyncio.create_task(self._watch_code())
+
+    # ---------- Selbst-Update: geänderter Code -> sauber beenden, der Dienst startet neu ----------
+
+    @staticmethod
+    def _code_stamp() -> dict[str, float]:
+        files = list((ROOT / "dave").glob("*.py")) + list((ROOT / "prompts").glob("*.md")) + [ROOT / ".env"]
+        return {str(f): f.stat().st_mtime for f in files if f.exists()}
+
+    async def _watch_code(self) -> None:
+        stamp = self._code_stamp()
+        while not self.is_closed():
+            await asyncio.sleep(15)
+            now = self._code_stamp()
+            if now != stamp:
+                await asyncio.sleep(10)  # warten, bis alle Dateien fertig geschrieben sind
+                if self._code_stamp() == stamp:
+                    continue
+                log.info("Code oder Einstellungen geändert, starte neu …")
+                self.reload_requested = True
+                await self.close()
+                return
+
+    def _seed_selfroles(self, guild: discord.Guild) -> None:
+        """Gibt die Rollen aus DAVE_SELFROLES einmalig frei (danach gelten /dave rolle_freigeben/_sperren)."""
+        data, groups = self.actions.data, self.actions.role_groups
+        wanted = {norm(n) for _t, names in groups for n in names}
+        key = "selfroles_seeded:" + ",".join(sorted(wanted))
+        if not wanted or data.get(guild.id, key):
+            return
+        added = []
+        for role in guild.roles:
+            if norm(role.name) in wanted:
+                problem = role_problem(role, guild.me, [role.id])
+                if problem:
+                    log.warning("Rolle %s nicht freigegeben: %s", role.name, problem)
+                    continue
+                data.set_self_role(guild.id, role.id, True)
+                added.append(role.name)
+        data.set(guild.id, key, True)
+        log.info("Selfroles freigegeben auf %s: %s", guild.name, ", ".join(added) or "keine gefunden")
+
+    async def on_interaction(self, interaction: discord.Interaction) -> None:
+        if self.actions and interaction.type == discord.InteractionType.component:
+            if not await self.actions.role_button(interaction) and self.events:
+                await self.events.button(interaction)
+
+    async def on_voice_state_update(self, member, before, after) -> None:
+        if self.tempvoice:
+            try:
+                await self.tempvoice.on_voice(member, before, after)
+            except discord.HTTPException as e:
+                log.warning("Eigener Raum: %s", e)
 
     async def on_member_join(self, member: discord.Member) -> None:
         if self.actions:
@@ -138,6 +225,14 @@ class Dave(discord.Client):
             if self.store:
                 asyncio.create_task(asyncio.to_thread(self.store.warmup))
             for guild in self.guilds:
+                if self.tempvoice:
+                    await self.tempvoice.cleanup_all(guild)
+                if self.actions:
+                    self._seed_selfroles(guild)
+                    try:
+                        await refresh_role_message(guild, self.actions.data, self.actions.role_groups)
+                    except discord.HTTPException as e:
+                        log.warning("Selfroles-Nachricht nicht möglich: %s", e)
                 try:
                     self.tree.copy_global_to(guild=guild)
                     cmds = await self.tree.sync(guild=guild)
@@ -197,6 +292,10 @@ class Dave(discord.Client):
             return
         if self.actions and self.actions.stopped(message.guild):
             return  # Notbremse: Dave hört weg, bis /dave weiter
+        if self.proactive:
+            self.proactive.note_activity(message.channel.id)
+        if self.counting and await self.counting.handle(message):
+            return  # Counting-Kanal: nur zählen, nicht quatschen
 
         channel_id = message.channel.id
         text = message.clean_content
