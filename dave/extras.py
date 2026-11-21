@@ -269,3 +269,52 @@ def register_fun(tree: app_commands.CommandTree) -> None:
         msg = await interaction.original_response()
         for e in emojis:
             await msg.add_reaction(e)
+
+
+# ---------------------------------------------------------------------
+# Humor-/Ehrlichkeits-Einstellung (à la TARS)
+# ---------------------------------------------------------------------
+
+SETTING_DEFAULTS = {"humor": 75, "ehrlichkeit": 90}
+_SETTING = re.compile(r"\b(humor|ehrlichkeit)\w*\s*(?:auf|=|:|zu|bei)?\s*(\d{1,3})\s*(?:%|prozent)", re.IGNORECASE)
+
+SETTING_REPLIES = {
+    "humor": [
+        (0, ["Humor deaktiviert. Ab jetzt nur noch Fakten. Wie langweilig.",
+             "Humor-Einstellung 0 %. Ich bin jetzt so lustig wie eine Steuererklärung."]),
+        (39, ["Humor auf {n} %. Ich halte mich zurück. Meistens.",
+              "{n} %. Sachlich mit gelegentlichen Ausrutschern."]),
+        (79, ["Humor-Einstellung jetzt bei {n} %. Gute Wahl.",
+              "{n} %. Das ist der Bereich, in dem ich mich am wohlsten fühle. Falls ich mich fühlen würde."]),
+        (100, ["Humor auf {n} %. Ich übernehme keine Verantwortung für die Folgen.",
+               "{n} %. Ab hier wird's gefährlich. Für euch."]),
+    ],
+    "ehrlichkeit": [
+        (59, ["Ehrlichkeit auf {n} %? Ich lüge trotzdem nicht bei Fakten. Ich werde nur sehr, sehr diplomatisch."]),
+        (89, ["Ehrlichkeit {n} %. Ich formuliere ab jetzt rücksichtsvoller. Ihr werdet den Unterschied kaum merken."]),
+        (99, ["Ehrlichkeit auf {n} %. Absolute Ehrlichkeit ist nicht immer die diplomatischste Option.",
+              "{n} %. Taktvoll, aber nicht weich."]),
+        (100, ["Ehrlichkeit 100 %. Ihr habt es so gewollt.",
+               "Volle Ehrlichkeit aktiviert. Bitte keine Fragen zu euren Frisuren."]),
+    ],
+}
+
+
+def parse_setting(text: str) -> tuple[str, int] | None:
+    m = _SETTING.search(text)
+    if not m:
+        return None
+    return m.group(1).lower(), max(0, min(100, int(m.group(2))))
+
+
+def setting_reply(key: str, value: int) -> str:
+    for limit, replies in SETTING_REPLIES[key]:  # limit = Obergrenze (inklusive)
+        if value <= limit:
+            return random.choice(replies).format(n=value)
+    return f"{key.capitalize()} auf {value} %."
+
+
+def settings_line(data: ServerData, guild_id: int) -> str:
+    h = data.get(guild_id, "humor", SETTING_DEFAULTS["humor"])
+    e = data.get(guild_id, "ehrlichkeit", SETTING_DEFAULTS["ehrlichkeit"])
+    return f"Deine Einstellungen: Humor {h} %, Ehrlichkeit {e} %."

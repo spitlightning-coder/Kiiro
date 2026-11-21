@@ -6,3 +6,6 @@ venv/
 .pytest_cache/
 logs/
 data/
+server/keys/
+server/ip.txt
+server/zap_sftp.json

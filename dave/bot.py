@@ -14,7 +14,8 @@ from .actions import Actions, role_problem
 from .community import Events, TempVoice, register_events, register_summary
 from .config import ROOT, Config
 from .daily import Daily, register_daily
-from .extras import Counting, norm, parse_groups, refresh_role_message, register_fun
+from .extras import (Counting, norm, parse_groups, parse_setting, refresh_role_message, register_fun,
+                     setting_reply, settings_line)
 from .learning import Learner, Line, build_context, parse_merk_dir
 from .longterm import MemoryStore
 from .memory import ChannelMemory
@@ -306,6 +307,11 @@ class Dave(discord.Client):
             self._learning.discard(channel_id)
 
     async def _context(self, message: discord.Message, history: list[dict]) -> str | None:
+        settings = settings_line(self.actions.data, message.guild.id) if self.actions and message.guild else None
+        memory = await self._memory_context(message, history)
+        return "\n\n".join(p for p in (settings, memory) if p) or None
+
+    async def _memory_context(self, message: discord.Message, history: list[dict]) -> str | None:
         if not self.store or message.guild is None:
             return None
         people = [message.author] + [m for m in message.mentions if self.user is None or m.id != self.user.id]
@@ -341,6 +347,15 @@ class Dave(discord.Client):
         self._note(message, Line(message.author.id, message.author.display_name, text), addressed)
 
         if not addressed:
+            return
+
+        if self.actions and (setting := parse_setting(text)):
+            key, value = setting
+            self.actions.data.set(message.guild.id, key, value)
+            confirmation = setting_reply(key, value)
+            await message.reply(confirmation, mention_author=False)
+            self.memory.add(channel_id, "Dave", confirmation, from_dave=True)
+            await self.actions.audit(message.guild, f"⚙️ {key.capitalize()} auf {value} % gesetzt von {message.author}")
             return
 
         if self.actions and (confirmation := self.actions.reminder_from_chat(message)):

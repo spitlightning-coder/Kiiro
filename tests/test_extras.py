@@ -47,3 +47,23 @@ def test_groups_and_norm():
     guild = SimpleNamespace(get_role=roles.get)
     out = group_roles(guild, [1, 2, 3, 4], groups)
     assert [(t, [r.id for r in rs]) for t, rs in out] == [("Pings", [2]), ("Spiele", [3, 1]), ("Weitere", [4])]
+
+
+def test_tars_settings(tmp_path):
+    from dave.extras import parse_setting, setting_reply, settings_line
+    assert parse_setting("Dave, Humor auf 60 %") == ("humor", 60)
+    assert parse_setting("ehrlichkeit 100 prozent bitte") == ("ehrlichkeit", 100)
+    assert parse_setting("Humor auf 250%") == ("humor", 100)
+    assert parse_setting("ich mag deinen Humor") is None
+    assert "60" in setting_reply("humor", 60) or "Humor" in setting_reply("humor", 60)
+    d = ServerData(tmp_path)
+    assert settings_line(d, 1) == "Deine Einstellungen: Humor 75 %, Ehrlichkeit 90 %."
+    d.set(1, "humor", 30)
+    assert "Humor 30 %" in settings_line(d, 1)
+
+
+def test_tars_reply_tiers():
+    from dave.extras import SETTING_REPLIES, setting_reply
+    assert setting_reply("humor", 0) in SETTING_REPLIES["humor"][0][1]
+    assert setting_reply("ehrlichkeit", 100) in SETTING_REPLIES["ehrlichkeit"][-1][1]
+    assert "{n}" not in setting_reply("humor", 55)

@@ -1,0 +1,48 @@
+#cloud-config
+# Richtet einen frischen Ubuntu-Server für Dave ein (bei Hetzner unter "Cloud config" einfügen).
+# Der Code und das Gedächtnis kommen danach per server_umzug.bat vom PC.
+timezone: Europe/Berlin
+package_update: true
+package_upgrade: true
+packages:
+  - python3-venv
+  - python3-pip
+  - tar
+  - unattended-upgrades
+  - ufw
+users:
+  - default
+  - name: dave
+    system: true
+    shell: /usr/sbin/nologin
+    home: /opt/dave
+write_files:
+  - path: /etc/systemd/system/dave.service
+    content: |
+      [Unit]
+      Description=Dave Discord-Bot
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      User=dave
+      WorkingDirectory=/opt/dave
+      Environment=PYTHONUTF8=1
+      Environment=PYTHONIOENCODING=utf-8
+      ExecStart=/opt/dave/.venv/bin/python -u -m dave
+      Restart=always
+      RestartSec=5
+      # Code geändert -> Dave beendet sich mit 3 und wird sofort neu gestartet
+      MemoryMax=3G
+
+      [Install]
+      WantedBy=multi-user.target
+runcmd:
+  - mkdir -p /opt/dave/logs /opt/dave/data
+  - chown -R dave:dave /opt/dave
+  - sudo -u dave python3 -m venv /opt/dave/.venv
+  - ufw allow OpenSSH
+  - ufw --force enable
+  - systemctl daemon-reload
+  - systemctl enable dave.service
+  - touch /opt/dave/.cloud-init-fertig
