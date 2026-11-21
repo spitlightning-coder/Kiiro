@@ -41,20 +41,31 @@ class OpenAIBrain:
         self.client = client or openai.AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=60, max_retries=1)
         self.tz = ZoneInfo(timezone)
 
-    def _system(self, server: str, channel: str) -> str:
+    def _system(self, server: str, channel: str, context: str | None = None) -> str:
         jetzt = datetime.now(self.tz)
         now = f"{WOCHENTAGE[jetzt.weekday()]}, {jetzt:%d.%m.%Y %H:%M}"
-        return f"{self.personality}\n\nServer: {server}\nKanal: #{channel}\nJetzt: {now}"
+        text = f"{self.personality}\n\nServer: {server}\nKanal: #{channel}\nJetzt: {now}"
+        return f"{text}\n\n{context}" if context else text
 
-    async def reply(self, history: list[dict], *, server: str, channel: str) -> str | None:
+    async def complete(self, system: str, user: str, *, max_tokens: int = 700) -> str | None:
+        """Einfacher Einzelaufruf ohne Persönlichkeit (z.B. fürs Lernen). None bei Fehler."""
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        answer = await self._ask(messages, max_tokens)
+        return None if answer in (FEHLER_ANTWORT, LIMIT_ANTWORT) else answer
+
+    async def reply(self, history: list[dict], *, server: str, channel: str,
+                    context: str | None = None) -> str | None:
         if not history:
             return None
-        messages = [{"role": "system", "content": self._system(server, channel)}, *history]
+        messages = [{"role": "system", "content": self._system(server, channel, context)}, *history]
+        return await self._ask(messages, self.max_tokens)
+
+    async def _ask(self, messages: list[dict], max_tokens: int) -> str:
         rate_limited = False
         for model in self.models:
             try:
                 response = await self.client.chat.completions.create(
-                    model=model, messages=messages, max_tokens=self.max_tokens,
+                    model=model, messages=messages, max_tokens=max_tokens,
                 )
             except openai.RateLimitError:
                 log.warning("Limit erreicht bei %s, versuche nächstes Modell", model)
