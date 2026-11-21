@@ -1,0 +1,1 @@
+"""Dave – Discord-KI-Bot."""
