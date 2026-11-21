@@ -10,7 +10,7 @@ from pathlib import Path
 import discord
 from discord import app_commands
 
-from .actions import Actions, role_problem
+from .actions import Actions, RateLimit, role_problem
 from .backup import Backups, register_backup
 from .community import Events, TempVoice, register_events, register_summary
 from .config import ROOT, Config
@@ -38,6 +38,12 @@ IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/heic", "image/hei
 IMAGE_EXT = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
              ".heic": "image/heic", ".heif": "image/heif"}
 MAX_IMAGES = 3
+DM_PER_HOUR = 40
+DM_HINT = ("## Privatchat\n"
+           "Du schreibst gerade privat mit {name} (Mitglied von {guild}). Niemand sonst liest mit. "
+           "Server-Sachen wie Rollen, Erinnerungen, Events oder Quiz gehen hier nicht – dafür auf den Server "
+           "bzw. die Slash-Befehle dort verweisen. Erzähl hier nichts über andere Leute, was die nicht selbst "
+           "öffentlich gesagt haben.")
 MAX_IMAGE_BYTES = 8_000_000
 INVITE = ("https://discord.com/oauth2/authorize?client_id={id}&scope=bot+applications.commands"
           "&permissions=1374674840592")
@@ -161,6 +167,10 @@ class Dave(discord.Client):
         self.backups = Backups(config.data_dir) if store or server else None
         if self.backups:
             register_backup(self.tree, self.backups)
+        self.dm_limit = RateLimit(DM_PER_HOUR)
+        self._dm_told: set[tuple[int, str]] = set()
+        if server:
+            self._register_dm_admin(server)
         self.reload_requested = False
 
     async def setup_hook(self) -> None:
@@ -364,12 +374,85 @@ class Dave(discord.Client):
         recalled = await asyncio.to_thread(self.store.recall, message.guild.id, query)
         return build_context(self.store, message.guild.id, ids, names, recalled)
 
+    # ---------- Privatchat (Direktnachrichten) ----------
+
+    def _register_dm_admin(self, server: ServerData) -> None:
+        admin = next((c for c in self.tree.get_commands() if c.name == "dave"), None)
+        if admin is None:
+            return
+
+        @admin.command(name="privatchat", description="Ob man Dave per Direktnachricht schreiben kann")
+        async def privatchat(interaction: discord.Interaction, an: bool):
+            if not interaction.user.guild_permissions.manage_guild:
+                await interaction.response.send_message("Das dürfen nur Admins.", ephemeral=True)
+                return
+            server.set(interaction.guild_id, "dm_on", an)
+            await interaction.response.send_message(
+                f"Privatchat mit Dave ist jetzt {'an' if an else 'aus'}.", ephemeral=True)
+            if self.actions:
+                await self.actions.audit(interaction.guild, f"⚙️ Privatchat {'an' if an else 'aus'} von {interaction.user}")
+
+    def home_guild(self, user: discord.abc.User) -> discord.Guild | None:
+        """Der Server, über den jemand Dave kennt. Fremde ohne gemeinsamen Server bekommen keine Antwort."""
+        return next((g for g in self.guilds if g.get_member(user.id)), None)
+
+    async def _tell_once(self, message: discord.Message, key: str, text: str) -> None:
+        if (message.author.id, key) not in self._dm_told:
+            self._dm_told.add((message.author.id, key))
+            await message.channel.send(text)
+
+    async def _on_dm(self, message: discord.Message) -> None:
+        guild = self.home_guild(message.author)
+        if guild is None:
+            log.info("Privatnachricht von jemandem ohne gemeinsamen Server ignoriert")
+            return
+        data = self.actions.data if self.actions else None
+        if data and (data.stopped(guild.id) or not data.get(guild.id, "dm_on", True)):
+            await self._tell_once(message, "aus", "Privatchat ist gerade ausgeschaltet. Schreib mir auf dem Server.")
+            return
+        if not self.dm_limit.allow((message.author.id,)):
+            await self._tell_once(message, "limit", "Kurze Pause, wir haben grad echt viel geschrieben. "
+                                                    "In einer Stunde geht's weiter.")
+            return
+        self._dm_told.discard((message.author.id, "limit"))
+        channel_id = message.channel.id
+        text = message.content
+        own_images = image_attachments(message, include_reply=False)
+        if own_images:
+            marker = "[schickt ein Bild]" if len(own_images) == 1 else f"[schickt {len(own_images)} Bilder]"
+            text = f"{text} {marker}".strip()
+        name = getattr(guild.get_member(message.author.id), "display_name", message.author.display_name)
+        self.memory.add(channel_id, name, text)
+        if self.store and (what := parse_merk_dir(text)):
+            self.store.add_fact(guild.id, message.author.id, name, what, source="manuell")
+        async with self._locks[channel_id]:
+            history = self.memory.as_messages(channel_id)
+            if not history:
+                return
+            async with message.channel.typing():
+                images = await load_images(image_attachments(message))
+                parts = [settings_line(data, guild.id) if data else None, DM_HINT.format(name=name, guild=guild.name)]
+                if self.store:  # nur Fakten über die Person selbst, keine Erinnerungen aus anderen Kanälen
+                    parts.append(build_context(self.store, guild.id, [message.author.id],
+                                               {message.author.id: name}, []))
+                extra = {"images": images} if images else {}
+                answer = await self.brain.reply(history, server=guild.name, channel=f"Privatchat mit {name}",
+                                                context="\n\n".join(p for p in parts if p), **extra)
+            if not answer:
+                return
+            for chunk in split_message(answer):
+                await message.channel.send(chunk)
+            self.memory.add(channel_id, "Dave", answer, from_dave=True)
+        log.info("Privatchat-Antwort an %s", message.author.id)
+
     async def on_message(self, message: discord.Message) -> None:
         if message.author == self.user:
             return  # eigene Nachrichten speichern wir direkt beim Senden
-        if message.guild is None:
-            return  # Direktnachrichten erstmal ignorieren
         if message.author.bot and not self.config.reply_to_bots:
+            return
+        if message.guild is None:
+            if not message.author.bot:
+                await self._on_dm(message)
             return
         if self.actions and self.actions.stopped(message.guild):
             return  # Notbremse: Dave hört weg, bis /dave weiter

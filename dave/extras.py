@@ -19,7 +19,7 @@ _NUM = re.compile(r"^\s*(\d{1,7})\b")
 
 HILFE = """**Was Dave kann**
 
-💬 **Reden:** @Dave erwähnen, auf seine Nachricht antworten oder einfach in 「🤖」dave schreiben.
+💬 **Reden:** @Dave erwähnen, auf seine Nachricht antworten oder einfach in 「🤖」dave schreiben Oder privat: Schreib Dave eine Direktnachricht.
 🧠 **Gedächtnis:** „Dave, merk dir: …“ · `/merken` · `/was_weisst_du` · `/vergiss_mich` · `/tagebuch`
 🖼️ **Bilder:** Schick Dave ein Bild (mit @Dave oder im Dave-Kanal), er schaut es sich an
 ⏰ **Erinnerungen:** „Dave, erinner mich in 10 Minuten an …“ · `/erinnerung` · `/erinnerungen` · `/erinnerung_loeschen`
