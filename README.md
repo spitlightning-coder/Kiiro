@@ -43,6 +43,18 @@ DAVE_MODEL=google/gemma-4-31b-it,nvidia/nemotron-3-super-120b-a12b
 
 Mehrere Modelle kommagetrennt: Ist eins am Limit oder liefert Murks, springt das nächste ein. `DAVE_EFFORT` gilt hier nicht.
 
+## Langzeitgedächtnis
+
+Dave merkt sich Dinge über Wochen, gespeichert in `data/` (bleibt auch nach einem Neustart erhalten):
+
+- **SQLite** (`data/dave.sqlite3`): feste Fakten über Leute und den Server, dazu Daves eigene Entwicklung (Meinungen, Insider-Witze, Spitznamen).
+- **ChromaDB** (`data/chroma/`): kurze Zusammenfassungen von Gesprächen, die er nach Bedeutung wiederfindet. Das Embedding-Modell läuft lokal (~80 MB, wird beim ersten Start geladen).
+- **Lernen:** Nach `DAVE_LEARN_EVERY` (Standard 15) neuen Nachrichten in einem Kanal, an dem Dave beteiligt war, zieht ein Modell im Hintergrund Merkenswertes heraus (1 API-Anfrage). Heikles wie Gesundheit, Politik oder Adressen wird bewusst nicht gespeichert.
+- **Von Hand:** „Dave, merk dir: …“ im Chat oder `/merken`.
+- **Kontrolle:** `/was_weisst_du` zeigt dir, was er über dich weiß, `/vergiss_mich` löscht alles über dich.
+
+Abschalten mit `DAVE_LONGTERM=false`.
+
 ## Persönlichkeit
 
 Steht in [`prompts/persoenlichkeit.md`](prompts/persoenlichkeit.md). Einfach bearbeiten und Dave neu starten.
@@ -52,6 +64,9 @@ Steht in [`prompts/persoenlichkeit.md`](prompts/persoenlichkeit.md). Einfach bea
 - `dave/bot.py` – Discord-Anbindung: entscheidet, ob Dave angesprochen ist, zeigt "schreibt…", teilt lange Antworten auf.
 - `dave/memory.py` – Kurzzeitgedächtnis pro Kanal (nur im RAM, weg nach Neustart).
 - `dave/brain.py` – Claude-Aufruf mit Persönlichkeit und Kanal-Verlauf.
+- `dave/brain_openai.py` – dasselbe für OpenAI-kompatible Anbieter wie Requesty.
+- `dave/longterm.py` – Langzeitgedächtnis (SQLite + ChromaDB).
+- `dave/learning.py` – Lernen aus Gesprächen und Gedächtnis-Teil für den Prompt.
 - `dave/config.py` – liest die `.env`.
 
 ## Tests
