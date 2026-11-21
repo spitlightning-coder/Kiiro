@@ -105,6 +105,7 @@ class OpenAIBrain:
                 rate_limited = True
                 continue
             for model in provider.models:
+                started = time.monotonic()
                 try:
                     response = await provider.client.chat.completions.create(
                         model=model, messages=messages, max_tokens=max_tokens,
@@ -135,6 +136,7 @@ class OpenAIBrain:
                 if choice.finish_reason == "length":
                     text += " …"
                 self.used[provider.name] = self.used.get(provider.name, 0) + 1
+                log.info("Antwort von %s/%s in %.1f s", provider.name, model, time.monotonic() - started)
                 if provider is not self.providers[0]:
                     log.info("Antwort kam von Reserve %s (%s)", provider.name, model)
                 return text
