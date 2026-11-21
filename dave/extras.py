@@ -117,18 +117,80 @@ def lead_emoji(name: str) -> str | None:
     return e or None
 
 
+_COLOR = re.compile(r"\s+#([0-9a-fA-F]{6})\s*$")
+_EXCLUSIVE = re.compile(r"\(\s*(?:nur\s+)?eine?\s*\)", re.IGNORECASE)
+
+
 def parse_groups(spec: str) -> list[tuple[str, list[str]]]:
-    """'Pings: News-Ping, Event-Ping | Spiele: GTA, Minecraft' -> [('Pings', [...]), ('Spiele', [...])]"""
+    """'Pings: News-Ping, Event-Ping | Spiele: GTA, Minecraft' -> [('Pings', [...]), ('Spiele', [...])]
+
+    Optional: Farbe hinter dem Namen ('🔴 Rot #e74c3c'), '(nur eine)' im Titel = man kann nur eine Rolle der Gruppe haben.
+    """
     groups = []
     for part in spec.split("|"):
         if ":" in part:
             title, names = part.split(":", 1)
         else:
             title, names = "Rollen", part
-        names = [n.strip() for n in names.split(",") if n.strip()]
+        names = [_COLOR.sub("", n).strip() for n in names.split(",") if n.strip()]
+        names = [n for n in names if n]
         if names:
             groups.append((title.strip(), names))
     return groups
+
+
+def role_colors(spec: str) -> dict[str, int]:
+    """Farben aus der Selfroles-Liste: {'rot': 0xE74C3C, …}"""
+    out = {}
+    for part in spec.split("|"):
+        for raw in part.split(":", 1)[-1].split(","):
+            m = _COLOR.search(raw)
+            if m:
+                out[norm(_COLOR.sub("", raw))] = int(m.group(1), 16)
+    return out
+
+
+def is_exclusive(title: str) -> bool:
+    return bool(_EXCLUSIVE.search(title))
+
+
+async def ensure_roles(guild: discord.Guild, data: ServerData, spec: str) -> list[discord.Role]:
+    """Legt Selfroles aus der Liste an, die es auf dem Server noch nicht gibt.
+
+    Jede Rolle nur einmal: Löscht ein Admin sie später, legt Dave sie nicht wieder an.
+    Neue Rollen haben keinerlei Rechte. Farbrollen kommen direkt unter Daves Rolle, damit die Farbe sichtbar ist.
+    """
+    me = guild.me
+    if not spec or not me.guild_permissions.manage_roles:
+        return []
+    done = set(data.get(guild.id, "roles_created", []))
+    existing = {norm(r.name) for r in guild.roles}
+    colors = role_colors(spec)
+    made = []
+    for _title, names in parse_groups(spec):
+        for name in names:
+            key = norm(name)
+            if not key or key in existing or key in done:
+                continue
+            try:
+                role = await guild.create_role(name=name[:100], colour=discord.Colour(colors.get(key, 0)),
+                                               permissions=discord.Permissions.none(), mentionable="ping" in key,
+                                               reason="Selfrole von Dave")
+            except discord.HTTPException as e:
+                log.warning("Rolle %s konnte nicht angelegt werden: %s", name, e)
+                continue
+            if key in colors and me.top_role.position > 1:
+                try:
+                    await role.edit(position=me.top_role.position - 1, reason="Farbrolle sichtbar machen")
+                except discord.HTTPException as e:
+                    log.warning("Farbrolle %s nicht verschiebbar: %s", name, e)
+            made.append(role)
+            existing.add(key)
+            done.add(key)
+            data.set(guild.id, "roles_created", sorted(done))
+    if made:
+        log.info("Neue Selfroles angelegt: %s", ", ".join(r.name for r in made))
+    return made
 
 
 def group_roles(guild: discord.Guild, role_ids: list[int],
@@ -203,12 +265,22 @@ async def refresh_role_message(guild: discord.Guild, data: ServerData, groups=()
         data.set(guild.id, "roles_message", None)
     if not grouped:
         grouped = [("Rollen", [])]
+    if stored and list(stored) != [t for t, _r in grouped][:len(stored)]:
+        # Gruppen neu sortiert oder mittendrin eingefügt: alles neu posten, damit die Reihenfolge stimmt
+        for mid in stored.values():
+            try:
+                await (await channel.fetch_message(mid)).delete()
+            except discord.HTTPException:
+                pass
+        stored = {}
+        log.info("Rollen-Nachrichten in #%s werden neu sortiert", channel.name)
     new_stored = {}
     for n, (title, roles) in enumerate(grouped):
         embed = discord.Embed(title=f"{title}", color=GROUP_COLORS[n % len(GROUP_COLORS)])
         if roles:
-            embed.description = "Knopf drücken = Rolle nehmen · nochmal drücken = wieder weg\n\n" + \
-                " ".join(r.mention for r in roles)
+            hint = ("Nur eine gleichzeitig: Knopf drücken = wechseln · nochmal drücken = wieder weg"
+                    if is_exclusive(title) else "Knopf drücken = Rolle nehmen · nochmal drücken = wieder weg")
+            embed.description = hint + "\n\n" + " ".join(r.mention for r in roles)
         else:
             embed.description = "Hier gibt's bald Rollen. Admins geben sie mit `/dave rolle_freigeben` frei."
         if n == 0:

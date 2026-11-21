@@ -15,7 +15,7 @@ from .backup import Backups, register_backup
 from .community import Events, TempVoice, register_events, register_summary
 from .config import ROOT, Config
 from .daily import Daily, register_daily
-from .extras import (Counting, norm, parse_groups, parse_setting, refresh_role_message, register_fun,
+from .extras import (Counting, ensure_roles, norm, parse_groups, parse_setting, refresh_role_message, register_fun,
                      setting_reply, settings_line)
 from .learning import Learner, Line, build_context, parse_merk_dir
 from .longterm import MemoryStore
@@ -202,7 +202,7 @@ class Dave(discord.Client):
                 await self.close()
                 return
 
-    def _seed_selfroles(self, guild: discord.Guild) -> None:
+    def _seed_selfroles(self, guild: discord.Guild, extra: list[discord.Role] = ()) -> None:
         """Gibt die Rollen aus DAVE_SELFROLES einmalig frei (danach gelten /dave rolle_freigeben/_sperren)."""
         data, groups = self.actions.data, self.actions.role_groups
         wanted = {norm(n) for _t, names in groups for n in names}
@@ -210,7 +210,7 @@ class Dave(discord.Client):
         if not wanted or data.get(guild.id, key):
             return
         added = []
-        for role in guild.roles:
+        for role in {r.id: r for r in [*guild.roles, *extra]}.values():
             if norm(role.name) in wanted:
                 problem = role_problem(role, guild.me, [role.id])
                 if problem:
@@ -301,7 +301,10 @@ class Dave(discord.Client):
                 if self.tempvoice:
                     await self.tempvoice.cleanup_all(guild)
                 if self.actions:
-                    self._seed_selfroles(guild)
+                    created = await ensure_roles(guild, self.actions.data, self.config.selfroles)
+                    if created:
+                        await asyncio.sleep(2)  # Discord-Cache die neuen Rollen mitbekommen lassen
+                    self._seed_selfroles(guild, created)
                     try:
                         await refresh_role_message(guild, self.actions.data, self.actions.role_groups)
                     except discord.HTTPException as e:

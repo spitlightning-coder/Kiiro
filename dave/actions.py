@@ -238,9 +238,23 @@ class Actions:
         member = interaction.guild.get_member(interaction.user.id) or interaction.user
         allowed = self.data.self_roles(interaction.guild.id)
         has = {r.id for r in member.roles if r.id in allowed}
-        results = await self.toggle_roles(member, has ^ {rid}, scope={rid})
+        wanted, scope = has ^ {rid}, {rid}
+        if rid not in has:
+            group = self.exclusive_group(interaction.guild, rid)
+            if group:  # "nur eine": die anderen Rollen der Gruppe gehen weg
+                wanted, scope = {rid}, group
+        results = await self.toggle_roles(member, wanted, scope=scope)
         await interaction.followup.send("\n".join(results), ephemeral=True)
         return True
+
+    def exclusive_group(self, guild: discord.Guild, rid: int) -> set[int] | None:
+        from .extras import group_roles, is_exclusive
+
+        for title, roles in group_roles(guild, self.data.self_roles(guild.id), self.role_groups):
+            ids = {r.id for r in roles}
+            if rid in ids and is_exclusive(title):
+                return ids
+        return None
 
     # ---------- Slash-Befehle ----------
 
@@ -255,7 +269,7 @@ class Actions:
                 await interaction.response.send_message("Ich bin gerade per Notbremse gestoppt.", ephemeral=True)
                 return
             from .extras import group_roles
-            grouped = group_roles(guild, actions.data.self_roles(guild.id), actions.role_groups)[:5]
+            grouped = group_roles(guild, actions.data.self_roles(guild.id), actions.role_groups)
             roles = [r for _t, rs in grouped for r in rs]
             if not roles:
                 await interaction.response.send_message("Hier sind noch keine Rollen zur Selbstwahl freigegeben.",
@@ -489,19 +503,51 @@ class Actions:
 
 
 class RoleView(discord.ui.View):
-    """/rollen: ein Auswahlmenü pro Gruppe, vorausgewählt ist, was man schon hat."""
+    """/rollen: ein Auswahlmenü pro Gruppe, vorausgewählt ist, was man schon hat.
 
-    def __init__(self, actions: Actions, member: discord.Member, grouped: list):
+    Discord erlaubt 5 Zeilen pro Nachricht: bei mehr als 5 Gruppen 4 Menüs pro Seite plus Blätter-Knöpfe.
+    """
+
+    PER_PAGE = 4
+
+    def __init__(self, actions: Actions, member: discord.Member, grouped: list, page: int = 0):
         super().__init__(timeout=180)
-        self.actions, self.member = actions, member
-        for title, roles in grouped:
+        from .extras import is_exclusive
+
+        self.actions, self.member, self.grouped = actions, member, grouped
+        paged = len(grouped) > 5
+        self.pages = max(1, -(-len(grouped) // self.PER_PAGE)) if paged else 1
+        self.page = max(0, min(page, self.pages - 1))
+        shown = grouped[self.page * self.PER_PAGE:(self.page + 1) * self.PER_PAGE] if paged else grouped
+        for title, roles in shown:
             roles = roles[:25]
+            single = is_exclusive(title)
             select = discord.ui.Select(
-                placeholder=title[:100], min_values=0, max_values=len(roles),
+                placeholder=title[:100], min_values=0, max_values=1 if single else len(roles),
                 options=[discord.SelectOption(label=r.name[:100], value=str(r.id), default=r in member.roles)
                          for r in roles])
             select.callback = self._make_callback(select, {r.id for r in roles})
             self.add_item(select)
+        if paged:
+            back = discord.ui.Button(label="◀ Zurück", style=discord.ButtonStyle.secondary, row=4,
+                                     disabled=self.page == 0)
+            info = discord.ui.Button(label=f"Seite {self.page + 1}/{self.pages}", style=discord.ButtonStyle.secondary,
+                                     row=4, disabled=True)
+            forward = discord.ui.Button(label="Weiter ▶", style=discord.ButtonStyle.primary, row=4,
+                                        disabled=self.page >= self.pages - 1)
+            back.callback = self._make_pager(self.page - 1)
+            forward.callback = self._make_pager(self.page + 1)
+            for b in (back, info, forward):
+                self.add_item(b)
+
+    def _make_pager(self, page: int):
+        async def callback(interaction: discord.Interaction):
+            if interaction.user.id != self.member.id:
+                await interaction.response.send_message("Das ist nicht dein Menü.", ephemeral=True)
+                return
+            member = interaction.guild.get_member(self.member.id) or self.member
+            await interaction.response.edit_message(view=RoleView(self.actions, member, self.grouped, page))
+        return callback
 
     def _make_callback(self, select: discord.ui.Select, scope: set[int]):
         async def callback(interaction: discord.Interaction):
