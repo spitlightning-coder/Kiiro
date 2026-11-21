@@ -13,12 +13,14 @@ from discord import app_commands
 from .actions import Actions, role_problem
 from .community import Events, TempVoice, register_events, register_summary
 from .config import ROOT, Config
+from .daily import Daily, register_daily
 from .extras import Counting, norm, parse_groups, refresh_role_message, register_fun
 from .learning import Learner, Line, build_context, parse_merk_dir
 from .longterm import MemoryStore
 from .memory import ChannelMemory
 from .freegames import FreeGames
 from .games import Hangmen, register_games
+from .guard import AntiSpam, HallOfFame, register_guard
 from .news import News
 from .proactive import Proactive
 from .quiz import Quiz, register_quiz
@@ -30,7 +32,7 @@ log = logging.getLogger("dave.bot")
 
 DISCORD_LIMIT = 2000
 INVITE = ("https://discord.com/oauth2/authorize?client_id={id}&scope=bot+applications.commands"
-          "&permissions=275163204624")
+          "&permissions=1374674840592")
 
 
 def split_message(text: str, limit: int = DISCORD_LIMIT) -> list[str]:
@@ -108,6 +110,12 @@ class Dave(discord.Client):
         if self.actions:
             self.actions.proactive = self.proactive
         register_fun(self.tree)
+        self.daily = Daily(self, server, brain, self.actions) if server else None
+        self.hof = HallOfFame(self, server, self.actions) if server else None
+        self.antispam = AntiSpam(self, server, self.actions) if server else None
+        if server:
+            register_daily(self.tree, self.daily)
+            register_guard(self.tree, server, self.actions)
         self.hangmen = Hangmen()
         register_games(self.tree, self.hangmen)
         if server:
@@ -128,6 +136,8 @@ class Dave(discord.Client):
             self.proactive.start()
         if self.events:
             self.events.start()
+        if self.daily:
+            self.daily.start()
         if self.config.autoreload:
             asyncio.create_task(self._watch_code())
 
@@ -139,7 +149,7 @@ class Dave(discord.Client):
         return {str(f): f.stat().st_mtime for f in files if f.exists()}
 
     async def _watch_code(self) -> None:
-        stamp = self._code_stamp()
+        stamp = _BOOT_STAMP  # Stand beim Laden des Codes – so geht keine Änderung während des Starts verloren
         while not self.is_closed():
             await asyncio.sleep(15)
             now = self._code_stamp()
@@ -173,8 +183,22 @@ class Dave(discord.Client):
 
     async def on_interaction(self, interaction: discord.Interaction) -> None:
         if self.actions and interaction.type == discord.InteractionType.component:
-            if not await self.actions.role_button(interaction) and self.events:
-                await self.events.button(interaction)
+            if await self.actions.role_button(interaction):
+                return
+            if self.events and await self.events.button(interaction):
+                return
+            if self.antispam:
+                await self.antispam.button(interaction)
+
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
+        if self.hof:
+            try:
+                await self.hof.on_reaction(payload)
+            except discord.HTTPException as e:
+                log.warning("Hall of Fame: %s", e)
+
+    async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent) -> None:
+        await self.on_raw_reaction_add(payload)
 
     async def on_voice_state_update(self, member, before, after) -> None:
         if self.tempvoice:
@@ -302,6 +326,8 @@ class Dave(discord.Client):
             return  # Notbremse: Dave hört weg, bis /dave weiter
         if self.proactive:
             self.proactive.note_activity(message.channel.id)
+        if self.antispam:
+            await self.antispam.on_message(message)
         if self.counting and await self.counting.handle(message):
             return  # Counting-Kanal: nur zählen, nicht quatschen
         if await self.hangmen.handle(message):
@@ -348,3 +374,6 @@ class Dave(discord.Client):
                     await message.channel.send(chunk)
             self.memory.add(channel_id, "Dave", answer, from_dave=True)
             self._note(message, Line(None, "Dave", answer, from_dave=True), True)
+
+
+_BOOT_STAMP = Dave._code_stamp()

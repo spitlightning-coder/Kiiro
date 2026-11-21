@@ -67,6 +67,19 @@ CREATE TABLE IF NOT EXISTS wordle (
     result INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (guild_id, user_id, day)
 );
+CREATE TABLE IF NOT EXISTS birthdays (
+    guild_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    day INTEGER NOT NULL,
+    month INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS starboard (
+    guild_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    board_message_id INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, message_id)
+);
 CREATE TABLE IF NOT EXISTS quiz_scores (
     guild_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
@@ -297,6 +310,41 @@ class ServerData:
             streak += 1
             expected = d - timedelta(days=1)
         return streak
+
+    # ---------- Geburtstage ----------
+
+    def set_birthday(self, guild_id: int, user_id: int, day: int, month: int) -> None:
+        with self._lock:
+            self.db.execute("INSERT INTO birthdays (guild_id, user_id, day, month) VALUES (?, ?, ?, ?) "
+                            "ON CONFLICT(guild_id, user_id) DO UPDATE SET day = excluded.day, month = excluded.month",
+                            (guild_id, user_id, day, month))
+            self.db.commit()
+
+    def delete_birthday(self, guild_id: int, user_id: int) -> bool:
+        with self._lock:
+            cur = self.db.execute("DELETE FROM birthdays WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
+            self.db.commit()
+            return cur.rowcount > 0
+
+    def birthdays(self, guild_id: int) -> list[tuple[int, int, int]]:
+        """(user_id, Tag, Monat)"""
+        with self._lock:
+            return self.db.execute("SELECT user_id, day, month FROM birthdays WHERE guild_id = ?",
+                                   (guild_id,)).fetchall()
+
+    # ---------- Hall of Fame ----------
+
+    def starboard_get(self, guild_id: int, message_id: int) -> int | None:
+        with self._lock:
+            row = self.db.execute("SELECT board_message_id FROM starboard WHERE guild_id = ? AND message_id = ?",
+                                  (guild_id, message_id)).fetchone()
+        return row[0] if row else None
+
+    def starboard_set(self, guild_id: int, message_id: int, board_message_id: int) -> None:
+        with self._lock:
+            self.db.execute("INSERT OR REPLACE INTO starboard (guild_id, message_id, board_message_id) VALUES (?, ?, ?)",
+                            (guild_id, message_id, board_message_id))
+            self.db.commit()
 
     # ---------- Quiz ----------
 

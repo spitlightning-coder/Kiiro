@@ -29,6 +29,9 @@ HILFE = """**Was Dave kann**
 🧠 **Quiz:** `/quiz` (Thema frei wählbar) · `/quiz_rangliste`
 🕹️ **Spiele:** `/galgen` (alle raten im Chat) · `/tictactoe` (gegen Dave oder jemanden) · `/ssp`
 🔤 **Worträtsel:** jeden Tag ein neues Wort – `/wort`, `/raten`, `/wort_rangliste`
+🎂 **Geburtstage:** `/geburtstag 24.12.` · `/geburtstage` – Dave gratuliert am Tag
+⭐ **Hall of Fame:** Nachrichten mit genug ⭐-Reaktionen landen in 「⭐」hall-of-fame
+❓ **Frage des Tages:** jeden Abend um 19 Uhr in 「✍」main-chat
 💬 **Zitate:** Rechtsklick auf Nachricht → Apps → „Als Zitat speichern“ · `/zitat`
 🎲 **Spaß:** `/wuerfel` · `/muenze` · `/umfrage`
 🔢 **Counting:** In 「🔢」counting zählt ihr zusammen hoch. Nicht zweimal hintereinander, sonst geht's von vorn los.
