@@ -55,6 +55,21 @@ Dave merkt sich Dinge über Wochen, gespeichert in `data/` (bleibt auch nach ein
 
 Abschalten mit `DAVE_LONGTERM=false`.
 
+## Server-Aktionen (Phase 1)
+
+Der Code entscheidet, nicht das Sprachmodell. Jede Aktion läuft durch eine Prüfkette (Notbremse, Freigabe, Rechte, Rollen-Hierarchie, Limits) und wird in `#dave-log` (falls vorhanden) und in `logs/dave.log` protokolliert.
+
+- **Erinnerungen:** „Dave, erinner mich in 10 Minuten an den Kuchen“ oder `/erinnerung`. Versteht „in 2 Stunden“, „um 18:30“, „morgen um 9“, „am 24.12. um 18 Uhr“. `/erinnerungen` zeigt offene, `/erinnerung_loeschen` löscht. Maximal 15 offene pro Person.
+- **Selbstwahl-Rollen:** Admins geben Rollen mit `/dave rolle_freigeben` frei, alle anderen wählen per `/rollen`. Rollen mit Admin- oder Moderationsrechten vergibt Dave nie. Dave braucht dafür „Rollen verwalten“, und seine Rolle muss über den vergebenen Rollen stehen.
+- **Begrüßung:** `/dave begruessung an:True kanal:#…` – Dave begrüßt neue Mitglieder kurz und persönlich.
+- **Notbremse:** `/dave stopp` hält Dave sofort komplett an, `/dave weiter` löst sie. `/dave status` zeigt alle Einstellungen.
+
+## Autostart (Windows)
+
+- `autostart_an.bat` – Dave startet ab jetzt beim Windows-Login unsichtbar im Hintergrund (und sofort). Stürzt er ab, startet er nach 30 s neu.
+- `dave_stoppen.bat` – beendet ihn. `autostart_aus.bat` – nimmt ihn wieder aus dem Autostart.
+- Dave läuft nie doppelt: Eine zweite Instanz beendet sich sofort von selbst.
+
 ## Persönlichkeit
 
 Steht in [`prompts/persoenlichkeit.md`](prompts/persoenlichkeit.md). Einfach bearbeiten und Dave neu starten.
@@ -67,6 +82,9 @@ Steht in [`prompts/persoenlichkeit.md`](prompts/persoenlichkeit.md). Einfach bea
 - `dave/brain_openai.py` – dasselbe für OpenAI-kompatible Anbieter wie Requesty.
 - `dave/longterm.py` – Langzeitgedächtnis (SQLite + ChromaDB).
 - `dave/learning.py` – Lernen aus Gesprächen und Gedächtnis-Teil für den Prompt.
+- `dave/actions.py` – Server-Aktionen, Prüfkette, Log, Notbremse.
+- `dave/serverdata.py` – Einstellungen und Erinnerungen (SQLite).
+- `dave/zeit.py` – versteht deutsche Zeitangaben.
 - `dave/config.py` – liest die `.env`.
 
 ## Tests
