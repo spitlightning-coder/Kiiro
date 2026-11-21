@@ -31,17 +31,33 @@ class Brain:
         self.client = client or anthropic.AsyncAnthropic()
         self.tz = ZoneInfo(timezone)
 
-    def _system(self, server: str, channel: str) -> list[dict]:
+    def _system(self, server: str, channel: str, context: str | None = None) -> list[dict]:
         jetzt = datetime.now(self.tz)
         now = f"{WOCHENTAGE[jetzt.weekday()]}, {jetzt:%d.%m.%Y %H:%M}"
+        wechselnd = f"Server: {server}\nKanal: #{channel}\nJetzt: {now}"
+        if context:
+            wechselnd += "\n\n" + context
         return [
             # Fester Teil zuerst, damit er gecacht werden kann.
             {"type": "text", "text": self.personality, "cache_control": {"type": "ephemeral"}},
             # Wechselnder Teil danach.
-            {"type": "text", "text": f"Server: {server}\nKanal: #{channel}\nJetzt: {now}"},
+            {"type": "text", "text": wechselnd},
         ]
 
-    async def reply(self, history: list[dict], *, server: str, channel: str) -> str | None:
+    async def complete(self, system: str, user: str, *, max_tokens: int = 700) -> str | None:
+        """Einfacher Einzelaufruf ohne Persönlichkeit (z.B. fürs Lernen)."""
+        try:
+            response = await self.client.beta.messages.create(
+                model=self.model, max_tokens=max_tokens, system=system,
+                messages=[{"role": "user", "content": user}], output_config={"effort": "low"},
+            )
+        except anthropic.APIError as e:
+            log.warning("Lern-Aufruf fehlgeschlagen: %s", e)
+            return None
+        return "".join(b.text for b in response.content if b.type == "text").strip() or None
+
+    async def reply(self, history: list[dict], *, server: str, channel: str,
+                    context: str | None = None) -> str | None:
         if not history:
             return None
         extra = {"betas": [FALLBACK_BETA], "fallbacks": "default"} if self.model in FALLBACK_MODELS else {}
@@ -49,7 +65,7 @@ class Brain:
             response = await self.client.beta.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
-                system=self._system(server, channel),
+                system=self._system(server, channel, context),
                 messages=history,
                 output_config={"effort": self.effort},
                 **extra,
