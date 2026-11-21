@@ -27,6 +27,9 @@ HILFE = """**Was Dave kann**
 🔊 **Eigener Raum:** Betritt „「➕」Raum erstellen“ und du bekommst deinen eigenen Sprachkanal
 📝 **Verpasst?** `/verpasst` – Dave fasst zusammen, was hier los war
 🧠 **Quiz:** `/quiz` (Thema frei wählbar) · `/quiz_rangliste`
+🕹️ **Spiele:** `/galgen` (alle raten im Chat) · `/tictactoe` (gegen Dave oder jemanden) · `/ssp`
+🔤 **Worträtsel:** jeden Tag ein neues Wort – `/wort`, `/raten`, `/wort_rangliste`
+💬 **Zitate:** Rechtsklick auf Nachricht → Apps → „Als Zitat speichern“ · `/zitat`
 🎲 **Spaß:** `/wuerfel` · `/muenze` · `/umfrage`
 🔢 **Counting:** In 「🔢」counting zählt ihr zusammen hoch. Nicht zweimal hintereinander, sonst geht's von vorn los.
 🔊 **News:** Dave postet regelmäßig frische Gaming-, Tech-, Wissenschafts- und VR-News in 「🔊」news.

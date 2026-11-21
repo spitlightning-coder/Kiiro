@@ -18,10 +18,13 @@ from .learning import Learner, Line, build_context, parse_merk_dir
 from .longterm import MemoryStore
 from .memory import ChannelMemory
 from .freegames import FreeGames
+from .games import Hangmen, register_games
 from .news import News
 from .proactive import Proactive
 from .quiz import Quiz, register_quiz
+from .quotes import register_quotes
 from .serverdata import ServerData
+from .wortel import register_wortel
 
 log = logging.getLogger("dave.bot")
 
@@ -105,6 +108,11 @@ class Dave(discord.Client):
         if self.actions:
             self.actions.proactive = self.proactive
         register_fun(self.tree)
+        self.hangmen = Hangmen()
+        register_games(self.tree, self.hangmen)
+        if server:
+            register_wortel(self.tree, server)
+            register_quotes(self.tree, server)
         if server:
             register_quiz(self.tree, Quiz(server, brain, self.actions))
         self.reload_requested = False
@@ -296,6 +304,8 @@ class Dave(discord.Client):
             self.proactive.note_activity(message.channel.id)
         if self.counting and await self.counting.handle(message):
             return  # Counting-Kanal: nur zählen, nicht quatschen
+        if await self.hangmen.handle(message):
+            return  # Galgenmännchen-Rateversuch
 
         channel_id = message.channel.id
         text = message.clean_content

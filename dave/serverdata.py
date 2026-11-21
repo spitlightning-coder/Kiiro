@@ -48,6 +48,25 @@ CREATE TABLE IF NOT EXISTS event_rsvp (
     status TEXT NOT NULL,
     PRIMARY KEY (event_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS quotes (
+    id INTEGER PRIMARY KEY,
+    guild_id INTEGER NOT NULL,
+    author_id INTEGER NOT NULL,
+    author_name TEXT NOT NULL,
+    text TEXT NOT NULL,
+    link TEXT NOT NULL,
+    saved_by INTEGER NOT NULL,
+    said_at REAL NOT NULL,
+    UNIQUE(guild_id, link)
+);
+CREATE TABLE IF NOT EXISTS wordle (
+    guild_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    day TEXT NOT NULL,
+    guesses TEXT NOT NULL DEFAULT '[]',
+    result INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id, day)
+);
 CREATE TABLE IF NOT EXISTS quiz_scores (
     guild_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
@@ -203,6 +222,81 @@ class ServerData:
         for uid, status in rows:
             out.setdefault(status, []).append(uid)
         return out
+
+    # ---------- Zitate ----------
+
+    def add_quote(self, guild_id: int, author_id: int, author_name: str, text: str, link: str,
+                  saved_by: int, said_at: float) -> int | None:
+        with self._lock:
+            cur = self.db.execute("INSERT OR IGNORE INTO quotes (guild_id, author_id, author_name, text, link, saved_by, "
+                                  "said_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                  (guild_id, author_id, author_name[:64], text[:1000], link, saved_by, said_at))
+            self.db.commit()
+            return cur.lastrowid if cur.rowcount else None
+
+    def random_quote(self, guild_id: int, author_id: int | None = None) -> dict | None:
+        q = "SELECT id, author_id, author_name, text, link, said_at FROM quotes WHERE guild_id = ?"
+        args: list = [guild_id]
+        if author_id:
+            q += " AND author_id = ?"
+            args.append(author_id)
+        with self._lock:
+            row = self.db.execute(q + " ORDER BY RANDOM() LIMIT 1", args).fetchone()
+        return dict(zip(("id", "author_id", "author_name", "text", "link", "said_at"), row)) if row else None
+
+    def quote_count(self, guild_id: int) -> int:
+        with self._lock:
+            return self.db.execute("SELECT COUNT(*) FROM quotes WHERE guild_id = ?", (guild_id,)).fetchone()[0]
+
+    def delete_quote(self, guild_id: int, quote_id: int, user_id: int, admin: bool = False) -> bool:
+        with self._lock:
+            cur = self.db.execute("DELETE FROM quotes WHERE guild_id = ? AND id = ? AND (? OR author_id = ? OR saved_by = ?)",
+                                  (guild_id, quote_id, int(admin), user_id, user_id))
+            self.db.commit()
+            return cur.rowcount > 0
+
+    # ---------- Worträtsel ----------
+
+    def wordle_get(self, guild_id: int, user_id: int, day: str) -> tuple[list[str], int]:
+        with self._lock:
+            row = self.db.execute("SELECT guesses, result FROM wordle WHERE guild_id = ? AND user_id = ? AND day = ?",
+                                  (guild_id, user_id, day)).fetchone()
+        return (json.loads(row[0]), row[1]) if row else ([], 0)
+
+    def wordle_set(self, guild_id: int, user_id: int, day: str, guesses: list[str], result: int) -> None:
+        with self._lock:
+            self.db.execute("INSERT INTO wordle (guild_id, user_id, day, guesses, result) VALUES (?, ?, ?, ?, ?) "
+                            "ON CONFLICT(guild_id, user_id, day) DO UPDATE SET guesses = excluded.guesses, "
+                            "result = excluded.result", (guild_id, user_id, day, json.dumps(guesses), result))
+            self.db.commit()
+
+    def wordle_stats(self, guild_id: int) -> list[tuple[int, int, int, float]]:
+        """(user_id, gelöst, gespielt, Ø Versuche) – result: 1-6 gelöst, -1 verloren, 0 läuft."""
+        with self._lock:
+            return self.db.execute(
+                "SELECT user_id, SUM(result > 0), SUM(result != 0), AVG(CASE WHEN result > 0 THEN result END) "
+                "FROM wordle WHERE guild_id = ? GROUP BY user_id HAVING SUM(result != 0) > 0 "
+                "ORDER BY SUM(result > 0) DESC, AVG(CASE WHEN result > 0 THEN result END) ASC LIMIT 10",
+                (guild_id,)).fetchall()
+
+    def wordle_streak(self, guild_id: int, user_id: int, today: str) -> int:
+        with self._lock:
+            rows = self.db.execute("SELECT day, result FROM wordle WHERE guild_id = ? AND user_id = ? AND result != 0 "
+                                   "ORDER BY day DESC", (guild_id, user_id)).fetchall()
+        from datetime import date, timedelta
+        t = date.fromisoformat(today)
+        streak, expected = 0, None
+        if rows and date.fromisoformat(rows[0][0]) < t - timedelta(days=1):
+            return 0  # Serie gerissen
+        for day, result in rows:
+            d = date.fromisoformat(day)
+            if expected is not None and d != expected:
+                break
+            if result <= 0:
+                break
+            streak += 1
+            expected = d - timedelta(days=1)
+        return streak
 
     # ---------- Quiz ----------
 
