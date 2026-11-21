@@ -9,16 +9,18 @@ from collections import defaultdict
 import discord
 from discord import app_commands
 
+from .actions import Actions
 from .config import Config
 from .learning import Learner, Line, build_context, parse_merk_dir
 from .longterm import MemoryStore
 from .memory import ChannelMemory
+from .serverdata import ServerData
 
 log = logging.getLogger("dave.bot")
 
 DISCORD_LIMIT = 2000
 INVITE = ("https://discord.com/oauth2/authorize?client_id={id}&scope=bot+applications.commands"
-          "&permissions=274877975552")
+          "&permissions=275146427392")
 
 
 def split_message(text: str, limit: int = DISCORD_LIMIT) -> list[str]:
@@ -60,9 +62,10 @@ class ForgetConfirm(discord.ui.View):
 
 
 class Dave(discord.Client):
-    def __init__(self, config: Config, brain, store: MemoryStore | None = None):
+    def __init__(self, config: Config, brain, store: MemoryStore | None = None, server: ServerData | None = None):
         intents = discord.Intents.default()
         intents.message_content = True  # muss auch im Developer Portal aktiviert sein
+        intents.members = True          # für die Begrüßung (Server Members Intent im Portal)
         super().__init__(
             intents=intents,
             allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=True, replied_user=True),
@@ -79,6 +82,15 @@ class Dave(discord.Client):
         self.tree = app_commands.CommandTree(self)
         if store:
             self._register_commands()
+        self.actions = Actions(self, server, self.tree) if server else None
+
+    async def setup_hook(self) -> None:
+        if self.actions:
+            self.actions.start_reminder_loop()
+
+    async def on_member_join(self, member: discord.Member) -> None:
+        if self.actions:
+            await self.actions.greet(member, self.brain)
 
     # ---------- Slash-Befehle ----------
 
@@ -121,9 +133,10 @@ class Dave(discord.Client):
         else:
             log.warning("Dave ist noch auf keinem Server. Einladungslink: %s",
                         INVITE.format(id=self.user.id if self.user else "?"))
-        if self.store and not self._synced:
+        if not self._synced:
             self._synced = True
-            asyncio.create_task(asyncio.to_thread(self.store.warmup))
+            if self.store:
+                asyncio.create_task(asyncio.to_thread(self.store.warmup))
             for guild in self.guilds:
                 try:
                     self.tree.copy_global_to(guild=guild)
@@ -182,6 +195,8 @@ class Dave(discord.Client):
             return  # Direktnachrichten erstmal ignorieren
         if message.author.bot and not self.config.reply_to_bots:
             return
+        if self.actions and self.actions.stopped(message.guild):
+            return  # Notbremse: Dave hört weg, bis /dave weiter
 
         channel_id = message.channel.id
         text = message.clean_content
@@ -191,6 +206,11 @@ class Dave(discord.Client):
         self._note(message, Line(message.author.id, message.author.display_name, text), addressed)
 
         if not addressed:
+            return
+
+        if self.actions and (confirmation := self.actions.reminder_from_chat(message)):
+            await message.reply(confirmation, mention_author=False)
+            self.memory.add(channel_id, "Dave", confirmation, from_dave=True)
             return
 
         if self.store and (what := parse_merk_dir(text)):
