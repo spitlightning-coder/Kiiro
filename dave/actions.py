@@ -335,6 +335,7 @@ class Actions:
                 "Selbstwahl-Rollen: " + (", ".join(r.name for r in roles if r) or "keine"),
                 f"Log-Kanal: {('#' + logch.name) if logch else 'keiner (nur Logdatei)'}",
                 f"Rollen verwalten: {'✅' if g.me.guild_permissions.manage_roles else '❌ fehlt'}",
+                f"Gehirn: {actions.bot.brain.status() if hasattr(actions.bot.brain, 'status') else 'Claude'}",
                 f"News: {'an' if d.get(g.id, 'news_on', True) else 'aus'}"
                 f"{(' in #' + actions.news.channel(g).name) if actions.news and actions.news.channel(g) else ' (kein Kanal)'}"
                 f", {len(actions.news.feeds(g.id)) if actions.news else 0} Quellen",

@@ -45,10 +45,20 @@ def main() -> None:
     if config.provider == "openai":
         from .brain_openai import OpenAIBrain
 
+        from .providers import fallbacks_from_env, find_ollama, verify
+
         models = [m.strip() for m in config.model.split(",") if m.strip()]
+        fallbacks = [p for p in (verify(p) for p in fallbacks_from_env()) if p]
+        if os.getenv("DAVE_OLLAMA", "auto").strip().lower() != "aus":
+            ollama = find_ollama(os.getenv("DAVE_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/"),
+                                 os.getenv("DAVE_OLLAMA_MODEL", "").strip())
+            if ollama:
+                fallbacks.append(ollama)
+        main_name = "requesty" if "requesty" in config.api_base else "haupt"
         brain = OpenAIBrain(load_personality(), models=models, max_tokens=config.max_tokens,
-                            base_url=config.api_base, api_key=config.api_key)
-        logging.getLogger("dave").info("Gehirn: %s über %s", ", ".join(models), config.api_base)
+                            base_url=config.api_base, api_key=config.api_key, fallbacks=fallbacks, name=main_name)
+        logging.getLogger("dave").info("Gehirn: %s", " → ".join(
+            f"{p.name} [{', '.join(p.models)}]" for p in brain.providers))
     else:
         brain = Brain(load_personality(), model=config.model, effort=config.effort, max_tokens=config.max_tokens)
         logging.getLogger("dave").info("Gehirn: %s (Anthropic)", config.model)
