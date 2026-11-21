@@ -1,6 +1,8 @@
 """Start: python -m dave"""
 
 import logging
+import sys
+from pathlib import Path
 
 from .bot import Dave
 from .brain import Brain
@@ -8,7 +10,14 @@ from .config import Config, load_personality
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    log_dir = Path(__file__).resolve().parent.parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout),
+                  logging.FileHandler(log_dir / "dave.log", encoding="utf-8")],
+    )
     config = Config.from_env()
     if config.provider == "openai":
         from .brain_openai import OpenAIBrain
