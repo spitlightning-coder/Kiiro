@@ -9,3 +9,4 @@ data/
 server/keys/
 server/ip.txt
 server/zap_sftp.json
+backups/

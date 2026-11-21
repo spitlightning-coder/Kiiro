@@ -6,6 +6,8 @@ set "GIT=git"
 where git >nul 2>nul || set "GIT=%ProgramFiles%\Git\cmd\git.exe"
 "%GIT%" --version >nul 2>nul || (echo Git nicht gefunden. & pause & exit /b 1)
 if not exist logs mkdir logs
+REM Haengengebliebene Sperrdatei von einem abgebrochenen Git-Aufruf entfernen
+if exist .git\index.lock del /f /q .git\index.lock
 if not exist .git (
   "%GIT%" init -q
   "%GIT%" remote add origin https://github.com/spitlightning-coder/Kiiro.git
@@ -18,7 +20,7 @@ echo Hole den Stand von GitHub ...
 "%GIT%" add -A
 "%GIT%" diff --cached --quiet && (echo Nichts Neues hochzuladen. & timeout /t 4 >nul & exit /b 0)
 "%GIT%" diff --cached --name-only | findstr /i /c:".env" | findstr /v /i /c:".env.example" >nul && (echo ABBRUCH: .env wuerde hochgeladen! & pause & exit /b 1)
-"%GIT%" commit -q -m "Dave: Stand vom %date% %time:~0,5%"
+"%GIT%" commit -q -m "Dave: Stand vom %date% %time:~0,5%" || (echo Commit fehlgeschlagen. & pause & exit /b 1)
 echo Lade hoch ...
 "%GIT%" push -q origin HEAD:main > logs\github.log 2>&1
 if errorlevel 1 (

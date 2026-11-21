@@ -64,6 +64,41 @@ def _clip(text: str) -> str:
     return text[:MAX_TEXT]
 
 
+def default_embedding(model_dir: Path):
+    """Chromas Standard-Embedding, aber mit dauerhaftem Modell-Ordner und einmal geladenem Modell.
+
+    Chroma legt das ~80-MB-Modell sonst unter ~/.cache ab – auf dem Server ist das nach jedem Neustart weg.
+    Außerdem baut die Standard-Funktion bei jedem Aufruf ein neues Modell-Objekt; hier passiert das nur einmal.
+    Der Name bleibt "default", damit bestehende Sammlungen ohne Konflikt weiter funktionieren.
+    """
+    from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+    from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
+
+    ONNXMiniLM_L6_V2.DOWNLOAD_PATH = Path(model_dir) / ONNXMiniLM_L6_V2.MODEL_NAME
+
+    class CachedDefault(DefaultEmbeddingFunction):
+        _model = None
+        _model_lock = threading.Lock()
+
+        def __call__(self, input):  # noqa: A002 – Name von Chroma vorgegeben
+            with self._model_lock:
+                if CachedDefault._model is None:
+                    CachedDefault._model = ONNXMiniLM_L6_V2()
+            return CachedDefault._model(input)
+
+    return CachedDefault()
+
+
+@dataclass
+class Stats:
+    facts: int
+    people: int
+    server_facts: int
+    memories: int
+    self_notes: int
+    since: float | None
+
+
 @dataclass
 class Fact:
     user_id: int | None
@@ -90,9 +125,7 @@ class MemoryStore:
             import chromadb
 
             if embedding_function is None:
-                from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
-
-                embedding_function = DefaultEmbeddingFunction()
+                embedding_function = default_embedding(self.data_dir / "models")
             self._embed = embedding_function
             client = chromadb.PersistentClient(path=str(self.data_dir / "chroma"))
             self.collection = client.get_or_create_collection(
@@ -180,6 +213,20 @@ class MemoryStore:
                 (guild_id, limit),
             ).fetchall()
         return [r[0] for r in rows]
+
+    def stats(self, guild_id: int) -> Stats:
+        with self._lock:
+            facts, people = self.db.execute(
+                "SELECT COUNT(*), COUNT(DISTINCT user_id) FROM facts WHERE guild_id = ? AND user_id IS NOT NULL",
+                (guild_id,)).fetchone()
+            server = self.db.execute("SELECT COUNT(*) FROM facts WHERE guild_id = ? AND user_id IS NULL",
+                                     (guild_id,)).fetchone()[0]
+            notes = self.db.execute("SELECT COUNT(*) FROM self_notes WHERE guild_id = ?", (guild_id,)).fetchone()[0]
+            since = self.db.execute(
+                "SELECT MIN(t) FROM (SELECT MIN(created_at) AS t FROM facts WHERE guild_id = ? "
+                "UNION ALL SELECT MIN(created_at) FROM self_notes WHERE guild_id = ?)",
+                (guild_id, guild_id)).fetchone()[0]
+        return Stats(facts, people, server, self.memory_count(guild_id), notes, since)
 
     # ---------- Erinnerungen (ChromaDB) ----------
 

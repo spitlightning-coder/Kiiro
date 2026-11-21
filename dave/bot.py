@@ -11,6 +11,7 @@ import discord
 from discord import app_commands
 
 from .actions import Actions, role_problem
+from .backup import Backups, register_backup
 from .community import Events, TempVoice, register_events, register_summary
 from .config import ROOT, Config
 from .daily import Daily, register_daily
@@ -27,11 +28,17 @@ from .proactive import Proactive
 from .quiz import Quiz, register_quiz
 from .quotes import register_quotes
 from .serverdata import ServerData
+from .tagebuch import register_tagebuch
 from .wortel import register_wortel
 
 log = logging.getLogger("dave.bot")
 
 DISCORD_LIMIT = 2000
+IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"}
+IMAGE_EXT = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
+             ".heic": "image/heic", ".heif": "image/heif"}
+MAX_IMAGES = 3
+MAX_IMAGE_BYTES = 8_000_000
 INVITE = ("https://discord.com/oauth2/authorize?client_id={id}&scope=bot+applications.commands"
           "&permissions=1374674840592")
 
@@ -53,6 +60,33 @@ def split_message(text: str, limit: int = DISCORD_LIMIT) -> list[str]:
     if rest:
         parts.append(rest)
     return parts
+
+
+def image_attachments(message: discord.Message, *, include_reply: bool = True) -> list[tuple[discord.Attachment, str]]:
+    """Bild-Anhänge der Nachricht (und der Nachricht, auf die sie antwortet), die Dave sich ansehen kann."""
+    sources = [message]
+    ref = message.reference
+    if include_reply and ref and isinstance(ref.resolved, discord.Message):
+        sources.append(ref.resolved)
+    found = []
+    for msg in sources:
+        for a in msg.attachments:
+            mime = (a.content_type or "").split(";")[0].strip().lower()
+            if not mime:
+                mime = IMAGE_EXT.get(Path(a.filename).suffix.lower(), "")
+            if mime in IMAGE_TYPES and a.size <= MAX_IMAGE_BYTES:
+                found.append((a, mime))
+    return found[:MAX_IMAGES]
+
+
+async def load_images(found: list[tuple[discord.Attachment, str]]) -> list[tuple[str, bytes]]:
+    images = []
+    for attachment, mime in found:
+        try:
+            images.append((mime, await attachment.read()))
+        except discord.HTTPException as e:
+            log.warning("Bild %s nicht ladbar: %s", attachment.filename, e)
+    return images
 
 
 class ForgetConfirm(discord.ui.View):
@@ -124,6 +158,9 @@ class Dave(discord.Client):
             register_quotes(self.tree, server)
         if server:
             register_quiz(self.tree, Quiz(server, brain, self.actions))
+        self.backups = Backups(config.data_dir) if store or server else None
+        if self.backups:
+            register_backup(self.tree, self.backups)
         self.reload_requested = False
 
     async def setup_hook(self) -> None:
@@ -139,6 +176,8 @@ class Dave(discord.Client):
             self.events.start()
         if self.daily:
             self.daily.start()
+        if self.backups:
+            self.backups.start()
         if self.config.autoreload:
             asyncio.create_task(self._watch_code())
 
@@ -216,6 +255,7 @@ class Dave(discord.Client):
 
     def _register_commands(self) -> None:
         store = self.store
+        register_tagebuch(self.tree, store, self.brain)
 
         @self.tree.command(name="merken", description="Dave merkt sich etwas über dich")
         @app_commands.describe(was="Was Dave sich merken soll, z.B. 'Ich spiele am liebsten Star Citizen'")
@@ -342,6 +382,10 @@ class Dave(discord.Client):
         channel_id = message.channel.id
         text = message.clean_content
         # clean_content macht aus <@123> lesbare @Namen
+        own_images = image_attachments(message, include_reply=False)
+        if own_images:
+            marker = "[schickt ein Bild]" if len(own_images) == 1 else f"[schickt {len(own_images)} Bilder]"
+            text = f"{text} {marker}".strip()
         self.memory.add(channel_id, message.author.display_name, text)
         addressed = self._is_addressed(message)
         self._note(message, Line(message.author.id, message.author.display_name, text), addressed)
@@ -371,13 +415,18 @@ class Dave(discord.Client):
         async with self._locks[channel_id]:
             history = self.memory.as_messages(channel_id)
             async with message.channel.typing():
+                images = await load_images(image_attachments(message))
                 context = await self._context(message, history)
+                extra = {"images": images} if images else {}
                 answer = await self.brain.reply(
                     history,
                     server=message.guild.name,
                     channel=getattr(message.channel, "name", "?"),
                     context=context,
+                    **extra,
                 )
+                if images:
+                    log.info("Dave hat sich %d Bild(er) angesehen", len(images))
             if not answer:
                 return
             first = True

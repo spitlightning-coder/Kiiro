@@ -57,9 +57,17 @@ class Brain:
         return "".join(b.text for b in response.content if b.type == "text").strip() or None
 
     async def reply(self, history: list[dict], *, server: str, channel: str,
-                    context: str | None = None) -> str | None:
+                    context: str | None = None, images: list[tuple[str, bytes]] | None = None) -> str | None:
         if not history:
             return None
+        if images:
+            import base64
+
+            last = history[-1]
+            blocks = [{"type": "image", "source": {"type": "base64", "media_type": mime,
+                                                   "data": base64.b64encode(data).decode("ascii")}}
+                      for mime, data in images]
+            history = [*history[:-1], {**last, "content": [*blocks, {"type": "text", "text": last["content"]}]}]
         extra = {"betas": [FALLBACK_BETA], "fallbacks": "default"} if self.model in FALLBACK_MODELS else {}
         try:
             response = await self.client.beta.messages.create(

@@ -6,6 +6,7 @@ Mehrere Modelle möglich: zickt eins (Limit, Fehler, leere Antwort), kommt das n
 
 from __future__ import annotations
 
+import base64
 import logging
 import re
 import time
@@ -29,6 +30,16 @@ def clean(text: str) -> str:
     if "</think>" in text.lower():  # nur schließendes Tag geliefert
         text = re.split(r"</think>", text, flags=re.IGNORECASE)[-1]
     return _DAVE_PREFIX.sub("", text.strip()).strip()
+
+
+def with_images(messages: list[dict], images: list[tuple[str, bytes]]) -> list[dict]:
+    """Hängt Bilder (MIME-Typ, Bytes) an die letzte Nachricht an – im OpenAI-Format, das auch Gemini versteht."""
+    last = messages[-1]
+    parts = [{"type": "text", "text": last["content"]}]
+    for mime, data in images:
+        parts.append({"type": "image_url",
+                      "image_url": {"url": f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"}})
+    return [*messages[:-1], {**last, "content": parts}]
 
 
 @dataclass
@@ -92,10 +103,17 @@ class OpenAIBrain:
         return None if answer in (FEHLER_ANTWORT, LIMIT_ANTWORT) else answer
 
     async def reply(self, history: list[dict], *, server: str, channel: str,
-                    context: str | None = None) -> str | None:
+                    context: str | None = None, images: list[tuple[str, bytes]] | None = None) -> str | None:
         if not history:
             return None
         messages = [{"role": "system", "content": self._system(server, channel, context)}, *history]
+        if images:
+            answer = await self._ask(with_images(messages, images), self.max_tokens)
+            if answer not in (FEHLER_ANTWORT, LIMIT_ANTWORT):
+                return answer
+            log.warning("Bild konnte nicht angeschaut werden, antworte ohne Bild")
+            messages[-1] = {**messages[-1], "content": messages[-1]["content"]
+                            + "\n(Hinweis: Das Bild dazu konntest du gerade nicht ansehen. Sag das kurz.)"}
         return await self._ask(messages, self.max_tokens)
 
     async def _ask(self, messages: list[dict], max_tokens: int) -> str:
