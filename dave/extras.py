@@ -312,6 +312,10 @@ def register_fun(tree: app_commands.CommandTree) -> None:
     async def hilfe(interaction: discord.Interaction):
         await interaction.response.send_message(HILFE, ephemeral=True)
 
+    @tree.command(name="help", description="Shows what Dave can do (wie /hilfe)")
+    async def help_(interaction: discord.Interaction):
+        await interaction.response.send_message(HILFE, ephemeral=True)
+
     @tree.command(name="wuerfel", description="Wirft einen Würfel")
     @app_commands.describe(seiten="Wie viele Seiten (Standard 6)")
     async def wuerfel(interaction: discord.Interaction, seiten: app_commands.Range[int, 2, 1000] = 6):

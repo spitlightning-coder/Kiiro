@@ -375,6 +375,14 @@ class Dave(discord.Client):
                                 "(kickt ihn nicht): %s", guild.name, INVITE.format(id=self.user.id))
                 except discord.HTTPException as e:
                     log.warning("Slash-Befehle konnten nicht synchronisiert werden: %s", e)
+            # Alte globale Befehle (aus früheren Versionen) aufräumen – sonst zeigt Discord Befehle,
+            # die es nicht mehr gibt ("Application command not found"). Dave nutzt nur Server-Befehle.
+            try:
+                self.tree.clear_commands(guild=None)
+                await self.tree.sync()
+                log.info("Alte globale Slash-Befehle aufgeräumt")
+            except discord.HTTPException as e:
+                log.warning("Globale Befehle nicht aufräumbar: %s", e)
 
     # ---------- Nachrichten ----------
 
