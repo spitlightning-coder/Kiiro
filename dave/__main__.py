@@ -54,7 +54,8 @@ def main() -> None:
                                  os.getenv("DAVE_OLLAMA_MODEL", "").strip())
             if ollama:
                 fallbacks.append(ollama)
-        main_name = "requesty" if "requesty" in config.api_base else "haupt"
+        main_name = next((n for n, key in (("requesty", "requesty"), ("gemini", "googleapis"), ("groq", "groq"),
+                                           ("openrouter", "openrouter")) if key in config.api_base), "haupt")
         brain = OpenAIBrain(load_personality(), models=models, max_tokens=config.max_tokens,
                             base_url=config.api_base, api_key=config.api_key, fallbacks=fallbacks, name=main_name)
         logging.getLogger("dave").info("Gehirn: %s", " → ".join(
