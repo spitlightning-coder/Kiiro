@@ -96,8 +96,9 @@ def test_image_attachments_filters(monkeypatch):
     msg = Msg(attachments=[_att("a.png", "image/png"), _att("x.txt", "text/plain"),
                            _att("huge.jpg", "image/jpeg", size=20_000_000), _att("c.gif", "image/gif")],
               reference=SimpleNamespace(resolved=replied))
-    assert [(a.filename, m) for a, m in image_attachments(msg)] == [("a.png", "image/png"), ("b.webp", "image/webp")]
-    assert [a.filename for a, _ in image_attachments(msg, include_reply=False)] == ["a.png"]
+    assert [(a.filename, m) for a, m in image_attachments(msg)] == [
+        ("a.png", "image/png"), ("huge.jpg", "image/jpeg"), ("b.webp", "image/webp")]
+    assert [a.filename for a, _ in image_attachments(msg, include_reply=False)] == ["a.png", "huge.jpg"]
 
 
 def test_stats_and_numbers(tmp_path):
@@ -121,3 +122,38 @@ def test_embed_never_shows_people_facts():
     assert "Blechkopf" in e.fields[0].value
     empty = build_embed("S", None, [], Stats(0, 0, 0, 0, 0, None))
     assert "unbeschriebenes Blatt" in empty.description
+
+
+def test_resized_url_for_big_screenshots():
+    from dave.bot import resized_url
+
+    big = SimpleNamespace(width=3840, height=2160, size=9_000_000,
+                          proxy_url="https://media.discordapp.net/attachments/1/2/image.png?ex=a&hm=b")
+    assert resized_url(big) == ("https://media.discordapp.net/attachments/1/2/image.png?ex=a&hm=b"
+                                "&width=1600&height=900&format=webp")
+    small = SimpleNamespace(width=800, height=600, size=200_000, proxy_url="https://m/x.png")
+    assert resized_url(small) is None
+
+
+async def test_load_images_uses_proxy_for_big_ones():
+    from dave.bot import load_images
+
+    class Http:
+        def __init__(self):
+            self.urls = []
+
+        async def get_from_cdn(self, url):
+            self.urls.append(url)
+            return b"webp"
+
+    async def read():
+        return b"original"
+
+    big = SimpleNamespace(width=4000, height=3000, size=12_000_000, proxy_url="https://m/x.png", filename="x.png",
+                          read=read)
+    small = SimpleNamespace(width=500, height=500, size=100_000, proxy_url="https://m/y.png", filename="y.png",
+                            read=read)
+    http = Http()
+    assert await load_images([(big, "image/png"), (small, "image/png")], http) == [
+        ("image/webp", b"webp"), ("image/png", b"original")]
+    assert http.urls == ["https://m/x.png?width=1600&height=1200&format=webp"]

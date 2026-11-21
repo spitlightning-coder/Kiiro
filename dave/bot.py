@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -44,7 +45,9 @@ DM_HINT = ("## Privatchat\n"
            "Server-Sachen wie Rollen, Erinnerungen, Events oder Quiz gehen hier nicht – dafür auf den Server "
            "bzw. die Slash-Befehle dort verweisen. Erzähl hier nichts über andere Leute, was die nicht selbst "
            "öffentlich gesagt haben.")
-MAX_IMAGE_BYTES = 8_000_000
+MAX_IMAGE_BYTES = 15_000_000   # Original direkt laden höchstens bis hierhin
+DIRECT_MAX_BYTES = 3_000_000   # größer -> verkleinert über den Discord-Medienproxy
+MAX_IMAGE_SIDE = 1600
 INVITE = ("https://discord.com/oauth2/authorize?client_id={id}&scope=bot+applications.commands"
           "&permissions=1374674840592")
 
@@ -80,19 +83,63 @@ def image_attachments(message: discord.Message, *, include_reply: bool = True) -
             mime = (a.content_type or "").split(";")[0].strip().lower()
             if not mime:
                 mime = IMAGE_EXT.get(Path(a.filename).suffix.lower(), "")
-            if mime in IMAGE_TYPES and a.size <= MAX_IMAGE_BYTES:
+            if mime in IMAGE_TYPES:
                 found.append((a, mime))
+            else:
+                log.info("Anhang %s (%s) ist kein Bild, das ich lesen kann", a.filename, mime or "?")
     return found[:MAX_IMAGES]
 
 
-async def load_images(found: list[tuple[discord.Attachment, str]]) -> list[tuple[str, bytes]]:
+def resized_url(attachment: discord.Attachment, limit: int = MAX_IMAGE_SIDE) -> str | None:
+    """Discord-Medienproxy liefert das Bild verkleinert als WebP – große Screenshots werden so klein und schnell."""
+    w, h = attachment.width or 0, attachment.height or 0
+    if not w or not h or (max(w, h) <= limit and attachment.size <= DIRECT_MAX_BYTES):
+        return None
+    scale = min(1.0, limit / max(w, h))
+    url = attachment.proxy_url
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}width={max(1, round(w * scale))}&height={max(1, round(h * scale))}&format=webp"
+
+
+async def load_images(found: list[tuple[discord.Attachment, str]], http=None) -> list[tuple[str, bytes]]:
     images = []
     for attachment, mime in found:
+        url = resized_url(attachment) if http is not None else None
+        try:
+            if url:
+                images.append(("image/webp", await http.get_from_cdn(url)))
+                continue
+        except discord.HTTPException as e:
+            log.warning("Verkleinertes Bild %s nicht ladbar (%s), versuche das Original", attachment.filename, e)
+        if attachment.size > MAX_IMAGE_BYTES:
+            log.warning("Bild %s ist zu groß (%d MB)", attachment.filename, attachment.size // 1_000_000)
+            continue
         try:
             images.append((mime, await attachment.read()))
         except discord.HTTPException as e:
             log.warning("Bild %s nicht ladbar: %s", attachment.filename, e)
     return images
+
+
+_PICTURE_TALK = re.compile(r"\b(bild|bilder|foto|screenshot|screen|pic|meme|anschauen|ansehen|angucken|schau|guck)",
+                           re.IGNORECASE)
+
+
+async def recent_images(message: discord.Message, seconds: int = 300) -> list[tuple[discord.Attachment, str]]:
+    """'@Dave was sagst du zu dem Bild?' – das Bild steckt oft in der Nachricht davor."""
+    if not _PICTURE_TALK.search(message.content or ""):
+        return []
+    try:
+        async for older in message.channel.history(limit=8, before=message):
+            if (message.created_at - older.created_at).total_seconds() > seconds:
+                break
+            if older.author.id == message.author.id:
+                found = image_attachments(older, include_reply=False)
+                if found:
+                    return found
+    except discord.HTTPException as e:
+        log.warning("Ältere Nachrichten nicht lesbar: %s", e)
+    return []
 
 
 class ForgetConfirm(discord.ui.View):
@@ -430,7 +477,8 @@ class Dave(discord.Client):
             if not history:
                 return
             async with message.channel.typing():
-                images = await load_images(image_attachments(message))
+                found = image_attachments(message) or await recent_images(message)
+                images = await load_images(found, self.http)
                 parts = [settings_line(data, guild.id) if data else None, DM_HINT.format(name=name, guild=guild.name)]
                 if self.store:  # nur Fakten über die Person selbst, keine Erinnerungen aus anderen Kanälen
                     parts.append(build_context(self.store, guild.id, [message.author.id],
@@ -501,7 +549,10 @@ class Dave(discord.Client):
         async with self._locks[channel_id]:
             history = self.memory.as_messages(channel_id)
             async with message.channel.typing():
-                images = await load_images(image_attachments(message))
+                found = image_attachments(message) or await recent_images(message)
+                images = await load_images(found, self.http)
+                if found and not images:
+                    log.warning("%d Bild(er) gefunden, aber keins ließ sich laden", len(found))
                 context = await self._context(message, history)
                 extra = {"images": images} if images else {}
                 answer = await self.brain.reply(
