@@ -225,6 +225,14 @@ class MemoryStore:
             self.collection = None
             self.server_collection = None
 
+    def _vectors(self, texts: list[str]) -> list:
+        """Embeddings selbst ausrechnen (mit dem einmal geladenen Modell) und Chroma fertig übergeben.
+
+        Wichtig: Chroma ignoriert eine übergebene Standard-Embedding-Funktion und baut sonst bei JEDER Suche
+        ein neues Modell auf – auf dem Server waren das ~9 Sekunden pro Antwort.
+        """
+        return [list(map(float, v)) for v in self._embed(texts)]
+
     def warmup(self) -> None:
         """Lädt das Embedding-Modell vorab (beim ersten Mal ~80 MB Download), damit die erste Antwort nicht hängt."""
         if self.collection is None:
@@ -332,6 +340,7 @@ class MemoryStore:
             self.collection.add(
                 ids=[memory_id],
                 documents=[text],
+                embeddings=self._vectors([text]),
                 metadatas=[{"guild_id": guild_id, "channel_id": channel_id, "created_at": self._clock()}],
             )
         except Exception as e:  # noqa: BLE001
@@ -353,7 +362,8 @@ class MemoryStore:
             n = self.collection.count()
             if n == 0:
                 return []
-            res = self.collection.query(query_texts=[query], n_results=min(k, n), where={"guild_id": guild_id})
+            res = self.collection.query(query_embeddings=self._vectors([query]), n_results=min(k, n),
+                                        where={"guild_id": guild_id})
         except Exception as e:  # noqa: BLE001
             log.warning("Erinnern fehlgeschlagen: %s", e)
             return []
@@ -414,7 +424,8 @@ class MemoryStore:
                 meta = {"guild_id": guild_id, "kind": kind, "created_at": when}
                 if channel_id is not None:
                     meta["channel_id"] = channel_id
-                self.server_collection.add(ids=[note_id], documents=[text], metadatas=[meta])
+                self.server_collection.add(ids=[note_id], documents=[text], embeddings=self._vectors([text]),
+                                           metadatas=[meta])
             except Exception as e:  # noqa: BLE001
                 log.warning("Server-Notiz nicht in ChromaDB: %s", e)
         return note_id
@@ -462,7 +473,7 @@ class MemoryStore:
             n = self.server_collection.count()
             if n == 0:
                 return []
-            res = self.server_collection.query(query_texts=[query], n_results=min(k, n),
+            res = self.server_collection.query(query_embeddings=self._vectors([query]), n_results=min(k, n),
                                                where={"guild_id": guild_id})
         except Exception as e:  # noqa: BLE001
             log.warning("Server-Erinnern fehlgeschlagen: %s", e)

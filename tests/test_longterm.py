@@ -111,3 +111,24 @@ def test_chroma_recall_and_forget(tmp_path):
     assert s.recall(1, "pizza", k=3, max_distance=2) == []
     assert s.recall(2, "pizza", k=3) == ["Pizza auf anderem Server"]  # anderer Server bleibt
     s.close()
+
+
+def test_chroma_uses_our_embedding_even_for_default_subclass(tmp_path):
+    """Chroma ignoriert DefaultEmbeddingFunction-Instanzen und baut sonst pro Suche ein neues ONNX-Modell
+    (auf dem Server ~9 s, ohne Netz sogar ein Download-Versuch). Wir rechnen die Vektoren deshalb selbst."""
+    import numpy as np
+    from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+
+    calls = []
+
+    class Mine(DefaultEmbeddingFunction):
+        def __call__(self, input):  # noqa: A002
+            calls.append(list(input))
+            return [np.array([1.0, float("pizza" in t.lower()), 0.1], dtype=np.float32) for t in input]
+
+    store = MemoryStore(tmp_path, embedding_function=Mine())
+    assert store.add_memory(1, 2, "Wir haben über Pizza geredet", [5])
+    store.add_server_note(1, "summary", "Pizza-Abend geplant", channel_id=2)
+    assert store.recall(1, "pizza") == ["Wir haben über Pizza geredet"]
+    assert store.recall_server(1, "pizza") == ["Pizza-Abend geplant"]
+    assert len(calls) == 4
