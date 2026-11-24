@@ -22,7 +22,8 @@ TZ = ZoneInfo("Europe/Berlin")
 
 DIARY_TASK = """Schreib einen kurzen Tagebucheintrag (3-5 Sätze, Ich-Form, Deutsch) als Dave über deine Zeit auf
 dem Discord-Server "{server}". Grundlage sind nur diese Notizen über dich selbst, was auf dem Server los war, und die Zahlen unten.
-Erfinde keine Erlebnisse und nenne keine Fakten über einzelne Leute. Bleib in deinem Ton (trocken, TARS-Humor).
+Erfinde keine Erlebnisse und nenne keine Fakten über einzelne Leute. Bleib in deinem Ton (trocken, TARS-Humor),
+aber in normaler Alltagssprache – keine Roboter-Floskeln wie „Kohlenstoff-Lebewesen“, „Sensoren“ oder „Prozessoren“.
 Keine Überschrift, kein Datum, keine Aufzählung.
 
 Deine Notizen über dich:
