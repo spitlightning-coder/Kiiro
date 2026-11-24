@@ -47,6 +47,8 @@ def request_extras(provider: "Provider", model: str) -> dict:
     """Gemini-Flash (nicht Lite) denkt sonst lange nach – für Chat reicht wenig Nachdenken."""
     if "googleapis" in provider.base_url and "flash" in model and "lite" not in model:
         return {"reasoning_effort": "low"}
+    if "groq.com" in provider.base_url and "gpt-oss" in model:  # Denk-Modell: kurz nachdenken reicht
+        return {"reasoning_effort": "low"}
     return {}
 
 

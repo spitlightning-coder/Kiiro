@@ -98,3 +98,11 @@ async def test_background_work_yields_when_busy():
     assert await b.complete("s", "u", background=True) is None
     assert fake.calls == []
     assert await b.complete("s", "u") == "JSON"  # Vordergrund läuft trotzdem
+
+
+def test_request_extras_groq_gpt_oss():
+    from dave.brain_openai import Provider, request_extras
+
+    g = Provider("groq", "https://api.groq.com/openai/v1", "k", [])
+    assert request_extras(g, "openai/gpt-oss-120b") == {"reasoning_effort": "low"}
+    assert request_extras(g, "llama-3.3-70b-versatile") == {}
