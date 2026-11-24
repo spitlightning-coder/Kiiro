@@ -107,7 +107,7 @@ def embed_threads() -> int:
             cpus = len(os.sched_getaffinity(0))
         except (AttributeError, OSError):
             cpus = os.cpu_count() or 1
-    return max(1, min(2, cpus))
+    return 1 if cpus <= 2 else 2
 
 
 def default_embedding(model_dir: Path):
@@ -137,6 +137,9 @@ def default_embedding(model_dir: Path):
             so.intra_op_num_threads = embed_threads()
             so.inter_op_num_threads = 1
             so.execution_mode = self.ort.ExecutionMode.ORT_SEQUENTIAL
+            # Threads nach getaner Arbeit schlafen legen statt im Kreis drehen (frisst sonst die CPU)
+            so.add_session_config_entry("session.intra_op.allow_spinning", "0")
+            so.add_session_config_entry("session.inter_op.allow_spinning", "0")
             return self.ort.InferenceSession(
                 os.path.join(self.DOWNLOAD_PATH, self.EXTRACTED_FOLDER_NAME, "model.onnx"),
                 providers=["CPUExecutionProvider"], sess_options=so)
@@ -345,6 +348,7 @@ class MemoryStore:
     def recall(self, guild_id: int, query: str, k: int = 3, max_distance: float = 0.6) -> list[str]:
         if self.collection is None or not query.strip():
             return []
+        started = time.monotonic()
         try:
             n = self.collection.count()
             if n == 0:
@@ -353,6 +357,9 @@ class MemoryStore:
         except Exception as e:  # noqa: BLE001
             log.warning("Erinnern fehlgeschlagen: %s", e)
             return []
+        finally:
+            if time.monotonic() - started > 1:
+                log.info("Gedächtnissuche dauerte %.1f s", time.monotonic() - started)
         docs = (res.get("documents") or [[]])[0]
         dists = (res.get("distances") or [[None] * len(docs)])[0]
         return [d for d, dist in zip(docs, dists) if dist is None or dist <= max_distance]
@@ -450,6 +457,7 @@ class MemoryStore:
     def recall_server(self, guild_id: int, query: str, k: int = 3, max_distance: float = 0.65) -> list[str]:
         if self.server_collection is None or not query.strip():
             return []
+        started = time.monotonic()
         try:
             n = self.server_collection.count()
             if n == 0:
@@ -459,6 +467,9 @@ class MemoryStore:
         except Exception as e:  # noqa: BLE001
             log.warning("Server-Erinnern fehlgeschlagen: %s", e)
             return []
+        finally:
+            if time.monotonic() - started > 1:
+                log.info("Server-Suche dauerte %.1f s", time.monotonic() - started)
         docs = (res.get("documents") or [[]])[0]
         dists = (res.get("distances") or [[None] * len(docs)])[0]
         return [d for d, dist in zip(docs, dists) if dist is None or dist <= max_distance]
