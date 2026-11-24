@@ -91,6 +91,11 @@ class HallOfFame:
                                          allowed_mentions=discord.AllowedMentions.none())
             self.data.starboard_set(guild.id, message.id, board_msg.id)
             log.info("Hall of Fame: Nachricht %s mit %d Sternen", message.id, stars)
+            awareness = getattr(self.actions, "awareness", None)
+            if awareness:
+                awareness.note_event(guild.id, f"Eine Nachricht von {message.author.display_name} aus "
+                                               f"#{getattr(message.channel, 'name', '?')} ist mit {stars} ⭐ "
+                                               "in der Hall of Fame gelandet.", message.channel.id)
 
 
 # ---------------------------------------------------------------------

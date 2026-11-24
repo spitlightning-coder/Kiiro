@@ -17,10 +17,9 @@ NUMBER_EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣
 ROLE_BUTTON_PREFIX = "dave:role:"
 _NUM = re.compile(r"^\s*(\d{1,7})\b")
 
-HILFE = """**Was Dave kann**
-
-💬 **Reden:** @Dave erwähnen, auf seine Nachricht antworten oder einfach in 「🤖」dave schreiben Oder privat: Schreib Dave eine Direktnachricht.
+HILFE = """💬 **Reden:** @Dave erwähnen, auf seine Nachricht antworten oder einfach in 「🤖」dave schreiben Oder privat: Schreib Dave eine Direktnachricht.
 🧠 **Gedächtnis:** „Dave, merk dir: …“ · `/merken` · `/was_weisst_du` · `/vergiss_mich` · `/tagebuch`
+🗣️ **Zu kompliziert?** `/stil einfach` – Dave redet mit dir ohne Nerd-Begriffe. Ein „hä?“ nach seiner Antwort reicht auch.
 🖼️ **Bilder:** Schick Dave ein Bild (mit @Dave oder im Dave-Kanal), er schaut es sich an
 ⏰ **Erinnerungen:** „Dave, erinner mich in 10 Minuten an …“ · `/erinnerung` · `/erinnerungen` · `/erinnerung_loeschen`
 🎭 **Rollen:** `/rollen` oder die Knöpfe in 「👫」selfroles
@@ -39,7 +38,11 @@ HILFE = """**Was Dave kann**
 🔊 **News:** Dave postet regelmäßig frische Gaming-, Tech-, Wissenschafts- und VR-News in 「🔊」news.
 🎁 **Gratis-Spiele:** Neue Gratis-Games von Epic, Steam & GOG landen in 「🎁」gratis-spiele (mit 🔔 News-Ping).
 
-🛠️ **Admins:** `/dave status` · `/dave stopp` · `/dave weiter` · `/dave begruessung` · `/dave rolle_freigeben` · `/dave news_quellen` …"""
+🛠️ **Admins:** `/dave hilfe` zeigt alle Admin-Befehle – z.B. `/dave lage` (was gerade auf dem Server los ist), `/dave status`, `/dave stopp`."""
+
+
+def hilfe_embed() -> discord.Embed:
+    return discord.Embed(title="Was Dave kann", description=HILFE, color=0x5865F2)
 
 
 def parse_count(text: str) -> int | None:
@@ -310,11 +313,19 @@ async def refresh_role_message(guild: discord.Guild, data: ServerData, groups=()
 def register_fun(tree: app_commands.CommandTree) -> None:
     @tree.command(name="hilfe", description="Zeigt alles, was Dave kann")
     async def hilfe(interaction: discord.Interaction):
-        await interaction.response.send_message(HILFE, ephemeral=True)
+        await interaction.response.send_message(embed=hilfe_embed(), ephemeral=True)
 
     @tree.command(name="help", description="Shows what Dave can do (wie /hilfe)")
     async def help_(interaction: discord.Interaction):
-        await interaction.response.send_message(HILFE, ephemeral=True)
+        await interaction.response.send_message(embed=hilfe_embed(), ephemeral=True)
+
+    admin = next((c for c in tree.get_commands() if c.name == "dave"), None)
+    if admin is not None:
+        @admin.command(name="hilfe", description="Alle Admin-Befehle von Dave auf einen Blick")
+        async def dave_hilfe(interaction: discord.Interaction):
+            lines = [f"`/dave {c.name}` – {c.description}" for c in sorted(admin.commands, key=lambda c: c.name)]
+            embed = discord.Embed(title="🛠️ Dave für Admins", description="\n".join(lines)[:4000], color=0x5865F2)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @tree.command(name="wuerfel", description="Wirft einen Würfel")
     @app_commands.describe(seiten="Wie viele Seiten (Standard 6)")

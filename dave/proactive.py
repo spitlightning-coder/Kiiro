@@ -103,6 +103,9 @@ class Proactive:
             return "Kanal-Pause"
         if now - self.last_activity.get(channel.id, 0) < MIN_SILENCE and not force:
             return "es wird gerade geschrieben"
+        awareness = getattr(self.actions, "awareness", None)
+        if awareness and awareness.is_tense(guild.id, channel.id):
+            return "Stimmung gerade angespannt"
         return None
 
     # ---------- Schleife ----------
@@ -139,6 +142,11 @@ class Proactive:
         facts = self.store.server_facts(guild.id, 6) if self.store else []
         if notes or facts:
             extra.append("Aus deinem Gedächtnis: " + "; ".join(notes + [f.fact for f in facts]))
+        awareness = getattr(self.actions, "awareness", None)
+        if awareness:
+            topics = awareness.situation(guild)["topics"][:5]
+            if topics:
+                extra.append("Worüber auf dem Server gerade geredet wird: " + ", ".join(topics))
         recent = self.data.get(guild.id, "last_headline")
         if recent:
             extra.append(f"Aktuelle Schlagzeile: {recent}")

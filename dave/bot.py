@@ -12,6 +12,7 @@ import discord
 from discord import app_commands
 
 from .actions import Actions, RateLimit, role_problem
+from .awareness import Awareness, register_awareness
 from .backup import Backups, register_backup
 from .community import Events, TempVoice, register_events, register_summary
 from .config import ROOT, Config
@@ -29,6 +30,7 @@ from .proactive import Proactive
 from .quiz import Quiz, register_quiz
 from .quotes import register_quotes
 from .serverdata import ServerData
+from .sprache import REPHRASE, SWITCH_INFO, is_confused, length_hint, register_stil, style_hint
 from .tagebuch import register_tagebuch
 from .wortel import register_wortel
 
@@ -214,6 +216,11 @@ class Dave(discord.Client):
         self.backups = Backups(config.data_dir) if store or server else None
         if self.backups:
             register_backup(self.tree, self.backups)
+        self.awareness = Awareness(self, store, server, brain) if store and server else None
+        if self.actions:
+            self.actions.awareness = self.awareness
+        if self.awareness:
+            register_awareness(self.tree, self.awareness, self.actions)
         self.dm_limit = RateLimit(DM_PER_HOUR)
         self._dm_told: set[tuple[int, str]] = set()
         if server:
@@ -235,6 +242,8 @@ class Dave(discord.Client):
             self.daily.start()
         if self.backups:
             self.backups.start()
+        if self.awareness:
+            self.awareness.start()
         if self.config.autoreload:
             asyncio.create_task(self._watch_code())
 
@@ -279,6 +288,8 @@ class Dave(discord.Client):
         log.info("Selfroles freigegeben auf %s: %s", guild.name, ", ".join(added) or "keine gefunden")
 
     async def on_interaction(self, interaction: discord.Interaction) -> None:
+        if self.awareness and interaction.guild and interaction.type == discord.InteractionType.application_command:
+            self._note_command(interaction)
         if self.actions and interaction.type == discord.InteractionType.component:
             if await self.actions.role_button(interaction):
                 return
@@ -286,6 +297,21 @@ class Dave(discord.Client):
                 return
             if self.antispam:
                 await self.antispam.button(interaction)
+
+    def _note_command(self, interaction: discord.Interaction) -> None:
+        """Umfragen und Events als Server-Ereignis merken (nur Titel/Frage, wer's gestartet hat)."""
+        data = interaction.data or {}
+        name = data.get("name")
+        opts = {o.get("name"): o.get("value") for o in data.get("options") or [] if isinstance(o, dict)}
+        where = getattr(interaction.channel, "name", "?")
+        who = interaction.user.display_name
+        if name == "umfrage" and opts.get("frage"):
+            self.awareness.note_event(interaction.guild.id, f"{who} hat in #{where} eine Umfrage gestartet: "
+                                                            f"„{str(opts['frage'])[:120]}“", interaction.channel_id)
+        elif name == "event" and opts.get("titel"):
+            self.awareness.note_event(interaction.guild.id, f"{who} hat ein Event geplant: "
+                                                            f"„{str(opts['titel'])[:120]}“ ({opts.get('wann', '?')})",
+                                      interaction.channel_id)
 
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
         if self.hof:
@@ -305,14 +331,21 @@ class Dave(discord.Client):
                 log.warning("Eigener Raum: %s", e)
 
     async def on_member_join(self, member: discord.Member) -> None:
+        if self.awareness and not member.bot:
+            self.awareness.note_event(member.guild.id, f"{member.display_name} ist dem Server beigetreten.")
         if self.actions:
             await self.actions.greet(member, self.brain)
+
+    async def on_member_remove(self, member: discord.Member) -> None:
+        if self.awareness and not member.bot:
+            self.awareness.note_event(member.guild.id, f"{member.display_name} hat den Server verlassen.")
 
     # ---------- Slash-Befehle ----------
 
     def _register_commands(self) -> None:
         store = self.store
-        register_tagebuch(self.tree, store, self.brain)
+        register_tagebuch(self.tree, store, self.brain, lambda: self.awareness)
+        register_stil(self.tree, store)
 
         @self.tree.command(name="merken", description="Dave merkt sich etwas über dich")
         @app_commands.describe(was="Was Dave sich merken soll, z.B. 'Ich spiele am liebsten Star Citizen'")
@@ -414,10 +447,21 @@ class Dave(discord.Client):
         finally:
             self._learning.discard(channel_id)
 
-    async def _context(self, message: discord.Message, history: list[dict]) -> str | None:
-        settings = settings_line(self.actions.data, message.guild.id) if self.actions and message.guild else None
+    async def _context(self, message: discord.Message, history: list[dict], extra: str | None = None) -> str | None:
+        guild = message.guild
+        settings = settings_line(self.actions.data, guild.id) if self.actions and guild else None
+        name = message.author.display_name
+        style = style_hint(self.store, guild.id, message.author.id, name) if guild else None
+        length = length_hint(message.content or "")
         memory = await self._memory_context(message, history)
-        return "\n\n".join(p for p in (settings, memory) if p) or None
+        server = None
+        if self.awareness and guild:
+            query = history[-1]["content"][-500:] if history else message.clean_content
+            try:
+                server = await self.awareness.context(guild, message.channel.id, query)
+            except Exception:  # noqa: BLE001
+                log.exception("Server-Kontext fehlgeschlagen")
+        return "\n\n".join(p for p in (settings, style, length, server, memory, extra) if p) or None
 
     async def _memory_context(self, message: discord.Message, history: list[dict]) -> str | None:
         if not self.store or message.guild is None:
@@ -487,7 +531,8 @@ class Dave(discord.Client):
             async with message.channel.typing():
                 found = image_attachments(message) or await recent_images(message)
                 images = await load_images(found, self.http)
-                parts = [settings_line(data, guild.id) if data else None, DM_HINT.format(name=name, guild=guild.name)]
+                parts = [settings_line(data, guild.id) if data else None, DM_HINT.format(name=name, guild=guild.name),
+                         style_hint(self.store, guild.id, message.author.id, name), length_hint(message.content or "")]
                 if self.store:  # nur Fakten über die Person selbst, keine Erinnerungen aus anderen Kanälen
                     parts.append(build_context(self.store, guild.id, [message.author.id],
                                                {message.author.id: name}, []))
@@ -514,6 +559,14 @@ class Dave(discord.Client):
             return  # Notbremse: Dave hört weg, bis /dave weiter
         if self.proactive:
             self.proactive.note_activity(message.channel.id)
+        if self.awareness:
+            self.awareness.count(message)
+            poll = getattr(message, "poll", None)
+            if poll is not None and self.awareness.is_observed(message.channel):
+                question = getattr(getattr(poll, "question", None), "text", None) or str(getattr(poll, "question", ""))
+                self.awareness.note_event(message.guild.id, f"{message.author.display_name} hat in "
+                                          f"#{message.channel.name} eine Umfrage gestartet: „{question[:120]}“",
+                                          message.channel.id)
         if self.antispam:
             await self.antispam.on_message(message)
         if self.counting and await self.counting.handle(message):
@@ -532,7 +585,20 @@ class Dave(discord.Client):
         addressed = self._is_addressed(message)
         self._note(message, Line(message.author.id, message.author.display_name, text), addressed)
 
+        # „hä?“ direkt nach Daves Antwort -> einfacher erklären (auch ohne @Dave)
+        last_dave = None
+        if self.store and is_confused(message.content or ""):
+            recent = self.memory.recent(channel_id)[:-1]
+            now = self.memory._clock()
+            last_dave = next((e for e in reversed(recent) if e.from_dave and now - e.at < 600), None)
+            if last_dave and not addressed and recent and recent[-1] is last_dave and now - last_dave.at < 180:
+                addressed = True
+
         if not addressed:
+            return
+
+        if last_dave is not None:
+            await self._explain_simpler(message, last_dave.text)
             return
 
         if self.actions and (setting := parse_setting(text)):
@@ -583,6 +649,28 @@ class Dave(discord.Client):
                     await message.channel.send(chunk)
             self.memory.add(channel_id, "Dave", answer, from_dave=True)
             self._note(message, Line(None, "Dave", answer, from_dave=True), True)
+
+
+    async def _explain_simpler(self, message: discord.Message, last: str) -> None:
+        guild, channel_id = message.guild, message.channel.id
+        switched = self.store.get_style(guild.id, message.author.id) != "einfach"
+        if switched:
+            self.store.set_style(guild.id, message.author.id, "einfach")
+            log.info("Stil für %s auf einfach gestellt (hat nachgefragt)", message.author.id)
+        async with self._locks[channel_id]:
+            history = self.memory.as_messages(channel_id)
+            async with message.channel.typing():
+                extra = REPHRASE.format(name=message.author.display_name, last=last[:1200])
+                context = await self._context(message, history, extra)
+                answer = await self.brain.reply(history, server=guild.name,
+                                                channel=getattr(message.channel, "name", "?"), context=context)
+            if not answer:
+                return
+            chunks = split_message(answer + (SWITCH_INFO if switched else ""))
+            await message.reply(chunks[0], mention_author=False)
+            for chunk in chunks[1:]:
+                await message.channel.send(chunk)
+            self.memory.add(channel_id, "Dave", answer, from_dave=True)
 
 
 _BOOT_STAMP = Dave._code_stamp()
