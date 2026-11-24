@@ -270,7 +270,7 @@ class Awareness:
         names = {c.name: c.id for c, _l, _n in batch}
         prompt = "\n\n".join(f"### Kanal: {c.name} ({len(lines)} Nachrichten)\n"
                              + "\n".join(lines)[-MAX_CHARS_PER_CHANNEL:] for c, lines, _n in batch)
-        raw = await self.brain.complete(SUMMARY_SYSTEM, prompt, max_tokens=900)
+        raw = await self.brain.complete(SUMMARY_SYSTEM, prompt, max_tokens=900, background=True)
         results = parse_summaries(raw, names)
         if not results:
             log.warning("Server-Bewusstsein: keine brauchbare Zusammenfassung bekommen")
@@ -301,7 +301,8 @@ class Awareness:
         for (channel_id, week), notes in groups.items():
             notes.sort(key=lambda n: n.created_at)
             text = "\n".join(f"- {n.text} (Themen: {', '.join(n.topics)})" for n in notes)
-            data = _json(await self.brain.complete(WEEKLY_SYSTEM, f"Woche {week}:\n{text}", max_tokens=400))
+            data = _json(await self.brain.complete(WEEKLY_SYSTEM, f"Woche {week}:\n{text}", max_tokens=400,
+                                                  background=True))
             if not data or not isinstance(data.get("zusammenfassung"), str):
                 continue  # nächster Versuch morgen
             channel = guild.get_channel(channel_id) if channel_id else None

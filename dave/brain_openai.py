@@ -87,6 +87,7 @@ class OpenAIBrain:
                                               timeout=p.timeout, max_retries=0)
         self.cooldown: dict[str, float] = {}
         self.model_cooldown: dict[tuple[str, str], float] = {}
+        self._inflight = 0
         self.hedge_after = HEDGE_AFTER
         self.used: dict[str, int] = {p.name: 0 for p in self.providers}
 
@@ -109,8 +110,22 @@ class OpenAIBrain:
         text = f"{self.personality}\n\nServer: {server}\nKanal: #{channel}\nJetzt: {now}"
         return f"{text}\n\n{context}" if context else text
 
-    async def complete(self, system: str, user: str, *, max_tokens: int = 700) -> str | None:
-        """Einfacher Einzelaufruf ohne Persönlichkeit (z.B. fürs Lernen). None bei Fehler."""
+    def busy(self) -> bool:
+        """Gerade läuft eine Chat-Antwort oder ein Anbieter/Modell ist überlastet bzw. am Limit."""
+        now = self._clock()
+        return (self._inflight > 0 or any(t > now for t in self.cooldown.values())
+                or any(t > now for t in self.model_cooldown.values()))
+
+    async def complete(self, system: str, user: str, *, max_tokens: int = 700,
+                       background: bool = False) -> str | None:
+        """Einfacher Einzelaufruf ohne Persönlichkeit (z.B. fürs Lernen). None bei Fehler.
+
+        background=True: Hintergrund-Arbeit (Lernen, Zusammenfassen) lässt Chat-Antworten den Vortritt –
+        ist gerade was los oder sind Anbieter überlastet, wird sie einfach übersprungen.
+        """
+        if background and self.busy():
+            log.info("Hintergrund-Aufgabe übersprungen: KI gerade beschäftigt oder überlastet")
+            return None
         messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
         answer = await self._ask(messages, max_tokens)
         return None if answer in (FEHLER_ANTWORT, LIMIT_ANTWORT) else answer
@@ -120,6 +135,13 @@ class OpenAIBrain:
         if not history:
             return None
         messages = [{"role": "system", "content": self._system(server, channel, context)}, *history]
+        self._inflight += 1
+        try:
+            return await self._reply(messages, images)
+        finally:
+            self._inflight -= 1
+
+    async def _reply(self, messages: list[dict], images) -> str:
         if images:
             answer = await self._ask(with_images(messages, images), self.max_tokens)
             if answer not in (FEHLER_ANTWORT, LIMIT_ANTWORT):

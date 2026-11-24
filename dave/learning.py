@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import re
 from dataclasses import dataclass, field
 
@@ -140,7 +141,7 @@ class Learner:
         transcript = "\n".join(
             f"Dave: {ln.text}" if ln.from_dave else f"{ln.name} [{ln.author_id}]: {ln.text}" for ln in lines
         )
-        raw = await self.brain.complete(EXTRACT_SYSTEM, transcript, max_tokens=700)
+        raw = await self.brain.complete(EXTRACT_SYSTEM, transcript, max_tokens=700, background=True)
         result = parse_extraction(raw, humans)
         if result.empty:
             log.info("Lernen in Kanal %s: nichts Merkenswertes", channel_id)
@@ -172,14 +173,16 @@ def build_context(store: MemoryStore, guild_id: int, user_ids: list[int], names:
             people.append(f"{name}: " + "; ".join(f.fact for f in facts))
     if people:
         parts.append("Über die Leute im Gespräch:\n" + "\n".join(f"- {p}" for p in people))
-    server = store.server_facts(guild_id, limit=8)
+    server = store.server_facts(guild_id, limit=5)
     if server:
         parts.append("Über den Server:\n" + "\n".join(f"- {f.fact}" for f in server))
     if recalled:
         parts.append("Erinnerungen, die vielleicht passen:\n" + "\n".join(f"- {r}" for r in recalled))
     notes = store.self_notes(guild_id, limit=12)
-    if notes:
-        parts.append("Wie du dich hier mit der Zeit entwickelt hast:\n" + "\n".join(f"- {n}" for n in notes))
+    if notes:  # nur ein paar, zufällig – sonst kaut Dave immer dieselben Running Gags wieder
+        notes = random.sample(notes, min(3, len(notes)))
+        parts.append("Wie du dich hier mit der Zeit entwickelt hast (nur selten erwähnen, nicht in jeder "
+                     "Antwort, und nur wenn es wirklich passt):\n" + "\n".join(f"- {n}" for n in notes))
     if not parts:
         return None
     return (

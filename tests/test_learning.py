@@ -39,7 +39,7 @@ class FakeBrain:
     def __init__(self, answer):
         self.answer, self.calls = answer, []
 
-    async def complete(self, system, user, *, max_tokens=700):
+    async def complete(self, system, user, *, max_tokens=700, background=False):
         self.calls.append(user)
         return self.answer
 

@@ -15,6 +15,7 @@ from discord import app_commands
 
 from .actions import Actions, RateLimit, role_problem
 from .awareness import Awareness, register_awareness
+from .brain import FEHLER_ANTWORT, LIMIT_ANTWORT
 from .backup import Backups, register_backup
 from .community import Events, TempVoice, register_events, register_summary
 from .config import ROOT, Config
@@ -224,6 +225,7 @@ class Dave(discord.Client):
         if self.awareness:
             register_awareness(self.tree, self.awareness, self.actions)
         self.dm_limit = RateLimit(DM_PER_HOUR)
+        self._busy_said: dict[int, float] = {}
         self._dm_told: set[tuple[int, str]] = set()
         if server:
             self._register_dm_admin(server)
@@ -463,7 +465,9 @@ class Dave(discord.Client):
                 server = await self.awareness.context(guild, message.channel.id, query)
             except Exception:  # noqa: BLE001
                 log.exception("Server-Kontext fehlgeschlagen")
-        return "\n\n".join(p for p in (settings, server, memory, style, extra, length, FINAL_CHECK) if p) or None
+        info = self.server_info(guild) if guild else None
+        return "\n\n".join(p for p in (settings, info, server, memory, style, extra, length, FINAL_CHECK)
+                           if p) or None
 
     async def _memory_context(self, message: discord.Message, history: list[dict]) -> str | None:
         if not self.store or message.guild is None:
@@ -544,7 +548,7 @@ class Dave(discord.Client):
                 extra = {"images": images} if images else {}
                 answer = await self.brain.reply(history, server=guild.name, channel=f"Privatchat mit {name}",
                                                 context="\n\n".join(p for p in parts if p), **extra)
-            if not answer:
+            if not answer or await self._busy_instead(message, answer):
                 return
             for chunk in split_message(answer):
                 await message.channel.send(chunk)
@@ -649,7 +653,7 @@ class Dave(discord.Client):
                 )
                 if images:
                     log.info("Dave hat sich %d Bild(er) angesehen", len(images))
-            if not answer:
+            if not answer or await self._busy_instead(message, answer):
                 return
             first = True
             for chunk in split_message(answer):
@@ -661,6 +665,43 @@ class Dave(discord.Client):
             self.memory.add(channel_id, "Dave", answer, from_dave=True)
             self._note(message, Line(None, "Dave", answer, from_dave=True), True)
 
+
+    async def _busy_instead(self, message: discord.Message, answer: str) -> bool:
+        """KI überlastet: einmal Bescheid sagen, danach nur ⏳ statt immer derselben Meldung.
+        Die Meldung landet nicht im Gedächtnis (sonst plappert Dave sie nach). True = erledigt."""
+        if answer not in (LIMIT_ANTWORT, FEHLER_ANTWORT):
+            return False
+        now = time.monotonic()
+        cid = message.channel.id
+        try:
+            if now - self._busy_said.get(cid, -1e9) < 180:
+                await message.add_reaction("⏳")
+            else:
+                self._busy_said[cid] = now
+                await message.reply(answer, mention_author=False)
+        except discord.HTTPException:
+            pass
+        return True
+
+    def server_info(self, guild: discord.Guild) -> str | None:
+        """Grunddaten zum Server, damit Dave Fragen wie „wie viele Kanäle gibt's?“ beantworten kann.
+        Nur öffentliche Kanäle (die @everyone sehen darf)."""
+        try:
+            def public(c):
+                return c.permissions_for(guild.default_role).view_channel
+            texts = [c for c in getattr(guild, "text_channels", []) if public(c)]
+            voices = [c for c in getattr(guild, "voice_channels", []) if public(c)]
+        except Exception:  # noqa: BLE001
+            return None
+        if not texts and not voices:
+            return None
+        members = getattr(guild, "member_count", None)
+        line = f"## Der Server\n„{guild.name}“" + (f", {members} Mitglieder" if members else "") + "."
+        if texts:
+            line += f"\nÖffentliche Textkanäle ({len(texts)}): " + ", ".join(f"#{c.name}" for c in texts)
+        if voices:
+            line += f"\nÖffentliche Sprachkanäle ({len(voices)}): " + ", ".join(c.name for c in voices)
+        return line
 
     async def _seed_memory(self, message: discord.Message, limit: int = 12) -> None:
         """Holt die letzten Nachrichten aus Discord ins Kurzzeitgedächtnis (nur im Arbeitsspeicher)."""
@@ -697,7 +738,7 @@ class Dave(discord.Client):
                 context = await self._context(message, history, extra)
                 answer = await self.brain.reply(history, server=guild.name,
                                                 channel=getattr(message.channel, "name", "?"), context=context)
-            if not answer:
+            if not answer or await self._busy_instead(message, answer):
                 return
             chunks = split_message(answer + (SWITCH_INFO if switched else ""))
             await message.reply(chunks[0], mention_author=False)

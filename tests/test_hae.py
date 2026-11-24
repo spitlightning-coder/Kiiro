@@ -117,3 +117,38 @@ async def test_seed_memory_after_restart(setup):
     texts = [e.text for e in bot.memory.recent(ch.id)]
     assert texts[:2] == ["Wir spielen Helldivers", "ah ja sehr toll"]  # fremde Bots fliegen raus
     assert sent and msg.replies
+
+
+async def test_busy_message_only_once_then_hourglass(setup):
+    from dave.brain import LIMIT_ANTWORT
+
+    bot, guild, ch = setup
+
+    async def limited(history, **kw):
+        return LIMIT_ANTWORT
+    bot.brain.reply = limited
+    bot.config = dataclasses.replace(bot.config, dave_channel_ids=frozenset({ch.id}))
+    bot.memory.add(ch.id, "Anna", "hi")
+    reactions = []
+    m1, m2 = make_msg(bot, "wie viele kanäle gibts?", ch, guild), make_msg(bot, "okay", ch, guild)
+
+    async def react(e):
+        reactions.append(e)
+    m2.add_reaction = react
+    await bot.on_message(m1)
+    await bot.on_message(m2)
+    assert m1.replies == [LIMIT_ANTWORT] and m2.replies == [] and reactions == ["⏳"]
+    assert all(not e.from_dave for e in bot.memory.recent(ch.id))  # Meldung nicht im Gedächtnis
+
+
+def test_server_info_lists_only_public_channels(setup):
+    bot, _guild, _ch = setup
+
+    def chan(name, public):
+        return N(name=name, permissions_for=lambda who: N(view_channel=public))
+    guild = N(name="Ultramegabomba", member_count=23, default_role="everyone",
+              text_channels=[chan("main-chat", True), chan("ratssitzung", False)],
+              voice_channels=[chan("Gaming", True)])
+    info = bot.server_info(guild)
+    assert "23 Mitglieder" in info and "#main-chat" in info and "ratssitzung" not in info
+    assert "Textkanäle (1)" in info and "Sprachkanäle (1)" in info

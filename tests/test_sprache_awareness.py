@@ -103,7 +103,7 @@ class Brain:
     def __init__(self, *answers):
         self.answers, self.prompts = list(answers), []
 
-    async def complete(self, system, user, max_tokens=0):
+    async def complete(self, system, user, max_tokens=0, background=False):
         self.prompts.append(user)
         return self.answers.pop(0) if self.answers else None
 

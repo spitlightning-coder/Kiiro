@@ -90,3 +90,11 @@ async def test_sends_temperature():
     b, fake = make(resp("ok"))
     await b.reply(HIST, server="S", channel="c")
     assert fake.calls[0]["temperature"] == 0.7
+
+
+async def test_background_work_yields_when_busy():
+    b, fake = make(resp("JSON"))
+    b.model_cooldown[("haupt", "m1")] = b._clock() + 100
+    assert await b.complete("s", "u", background=True) is None
+    assert fake.calls == []
+    assert await b.complete("s", "u") == "JSON"  # Vordergrund läuft trotzdem

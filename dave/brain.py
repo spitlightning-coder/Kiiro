@@ -14,8 +14,9 @@ FALLBACK_BETA = "server-side-fallback-2026-07-01"
 # Modelle, die serverseitige Fallbacks bei Ablehnungen unterstützen.
 FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-fable-5-2", "claude-fable-5-1"}
 
-FEHLER_ANTWORT = "Mein Hirn hängt gerade kurz. Versuch's gleich nochmal."
-LIMIT_ANTWORT = "Ich werde gerade mit Nachrichten überrannt. Gib mir eine Minute."
+FEHLER_ANTWORT = "Mein Hirn hängt gerade kurz – mein KI-Anbieter antwortet nicht. Versuch's gleich nochmal."
+LIMIT_ANTWORT = ("Ich werde gerade ausgebremst – meine kostenlosen KI-Anbieter sind überlastet. "
+                 "Versuch's in ein, zwei Minuten nochmal.")
 ABLEHNUNG_ANTWORT = "Dazu sag ich lieber nichts."
 
 WOCHENTAGE = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
@@ -44,7 +45,7 @@ class Brain:
             {"type": "text", "text": wechselnd},
         ]
 
-    async def complete(self, system: str, user: str, *, max_tokens: int = 700) -> str | None:
+    async def complete(self, system: str, user: str, *, max_tokens: int = 700, background: bool = False) -> str | None:
         """Einfacher Einzelaufruf ohne Persönlichkeit (z.B. fürs Lernen)."""
         try:
             response = await self.client.beta.messages.create(
