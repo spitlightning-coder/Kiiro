@@ -131,3 +131,12 @@ async def test_emoji_round_flow(tmp_path):
     assert 5 not in riddles.rounds
     assert data.game_top(1, "emoji") == [("Ben", 1, 1)]
     assert not await riddles.handle(msg("noch was"))  # Runde vorbei -> normale Nachricht
+
+
+def test_button_emojis_are_discord_safe():
+    """Discord lehnt manche Unicode-Zeichen als Knopf-Emoji ab (z.B. 🂠 Kartenrücken) – dann startet das Spiel nicht."""
+    g = sb.ClassicGame(N(id=1, display_name="X"), rng=random.Random(2))
+    allowed = {"🃏", "🔁", "✋", "🛡️", "📣"}
+    for item in sb.SabaccView(g).children:
+        if getattr(item, "emoji", None):
+            assert str(item.emoji) in allowed

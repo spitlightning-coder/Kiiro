@@ -221,7 +221,7 @@ class ClassicGame:
                           description=f"**Runde {min(self.round, MAX_ROUNDS)} von {MAX_ROUNDS}**" + (f"\n{note}" if note else ""))
         cards = "\n".join(c.label() + (" 🛡️" if c.uid == self.field["player"] else "") for c in p)
         e.add_field(name="Deine Karten", value=f"{cards}\n{describe(p)}", inline=True)
-        e.add_field(name="Dave", value=" ".join("🂠" for _ in self.hands["dave"])
+        e.add_field(name="Dave", value=" ".join("🎴" for _ in self.hands["dave"])
                     + (" (eine im Feld 🛡️)" if self.field["dave"] else ""), inline=True)
         if self.log:
             e.add_field(name="Verlauf", value="\n".join(self.log[-3:])[:1024], inline=False)
@@ -264,7 +264,7 @@ class SabaccView(discord.ui.View):
         if g.finished:
             return
         buttons = [
-            ("Karte ziehen", "🂠", discord.ButtonStyle.primary, not g.can_draw(), self._draw),
+            ("Karte ziehen", "🃏", discord.ButtonStyle.primary, not g.can_draw(), self._draw),
             ("Karte tauschen", "🔁", discord.ButtonStyle.secondary, False, self._mode("trade")),
             ("Stehen bleiben", "✋", discord.ButtonStyle.secondary, False, self._stand),
             ("Interferenzfeld", "🛡️", discord.ButtonStyle.secondary, g.field["player"] is not None, self._mode("protect")),
