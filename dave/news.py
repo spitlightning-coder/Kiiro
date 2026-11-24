@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import time
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -27,7 +28,7 @@ DEFAULT_FEEDS = [
     "https://www.spektrum.de/alias/rss/spektrum-de-rss-feed/996406",
     "https://www.uploadvr.com/rss/",
 ]
-INTERVAL_SECONDS = 20 * 60
+INTERVAL_SECONDS = 60 * 60   # höchstens einmal pro Stunde News
 MAX_PER_FEED = 2
 MAX_PER_RUN = 5
 USER_AGENT = "DaveDiscordBot/1.0 (RSS-Reader)"
@@ -124,16 +125,24 @@ class News:
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._loop())
 
+    def due(self, guild_id: int, now: float | None = None) -> bool:
+        """Letzte News-Runde merkt sich Dave dauerhaft – so gibt's auch nach Neustarts nicht öfter News."""
+        last = self.data.get(guild_id, "news_last_run", 0) or 0
+        return (now or time.time()) - last >= INTERVAL_SECONDS - 60
+
     async def _loop(self) -> None:
         await self.bot.wait_until_ready()
         await asyncio.sleep(30)
         while not self.bot.is_closed():
             for guild in list(self.bot.guilds):
+                if not self.due(guild.id):
+                    continue
                 try:
+                    self.data.set(guild.id, "news_last_run", time.time())
                     await self.run_once(guild)
                 except Exception:  # noqa: BLE001 – News dürfen Dave nie lahmlegen
                     log.exception("News-Runde fehlgeschlagen")
-            await asyncio.sleep(INTERVAL_SECONDS)
+            await asyncio.sleep(5 * 60)  # alle 5 Min. prüfen, ob die Stunde rum ist
 
     async def fetch(self, session: aiohttp.ClientSession, url: str) -> list[Item]:
         async with session.get(url, headers={"User-Agent": USER_AGENT},

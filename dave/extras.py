@@ -37,7 +37,7 @@ HILFE = """💬 **Reden:** @Dave erwähnen, auf seine Nachricht antworten oder e
 💬 **Zitate:** Rechtsklick auf Nachricht → Apps → „Als Zitat speichern“ · `/zitat`
 🎲 **Spaß:** `/wuerfel` · `/muenze` · `/umfrage`
 🔢 **Counting:** In 「🔢」counting zählt ihr zusammen hoch. Nicht zweimal hintereinander, sonst geht's von vorn los.
-🔊 **News:** Dave postet regelmäßig frische Gaming-, Tech-, Wissenschafts- und VR-News in 「🔊」news.
+🔊 **News:** Dave postet einmal pro Stunde frische Gaming-, Tech-, Wissenschafts- und VR-News in 「🔊」news.
 🎁 **Gratis-Spiele:** Neue Gratis-Games von Epic, Steam & GOG landen in 「🎁」gratis-spiele (mit 🔔 News-Ping).
 
 🛠️ **Admins:** `/dave hilfe` zeigt alle Admin-Befehle – z.B. `/dave lage` (was gerade auf dem Server los ist), `/dave status`, `/dave stopp`."""

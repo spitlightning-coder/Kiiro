@@ -43,3 +43,18 @@ def test_embed():
     e = make_embed(parse_feed(RSS)[0], 0x123456)
     assert e.title.startswith("Supernova") and e.url == "https://example.org/a"
     assert "Spektrum" in e.footer.text and e.image.url == "https://example.org/a.jpg"
+
+
+def test_news_due_once_per_hour(tmp_path):
+    from types import SimpleNamespace
+
+    from dave.news import INTERVAL_SECONDS, News
+    from dave.serverdata import ServerData
+
+    data = ServerData(tmp_path)
+    news = News(SimpleNamespace(), data, SimpleNamespace())
+    t = 1_800_000_000.0
+    assert news.due(1, now=t)  # noch nie gelaufen
+    data.set(1, "news_last_run", t)
+    assert not news.due(1, now=t + 20 * 60)  # nach Neustart nicht gleich wieder
+    assert news.due(1, now=t + INTERVAL_SECONDS)
