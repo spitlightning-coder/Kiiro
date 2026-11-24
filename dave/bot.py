@@ -31,7 +31,7 @@ from .proactive import Proactive
 from .quiz import Quiz, register_quiz
 from .quotes import register_quotes
 from .serverdata import ServerData
-from .sprache import REPHRASE, SWITCH_INFO, is_confused, length_hint, register_stil, style_hint
+from .sprache import FINAL_CHECK, REPHRASE, SWITCH_INFO, is_confused, length_hint, register_stil, style_hint
 from .tagebuch import register_tagebuch
 from .wortel import register_wortel
 
@@ -462,7 +462,7 @@ class Dave(discord.Client):
                 server = await self.awareness.context(guild, message.channel.id, query)
             except Exception:  # noqa: BLE001
                 log.exception("Server-Kontext fehlgeschlagen")
-        return "\n\n".join(p for p in (settings, style, length, server, memory, extra) if p) or None
+        return "\n\n".join(p for p in (settings, server, memory, style, extra, length, FINAL_CHECK) if p) or None
 
     async def _memory_context(self, message: discord.Message, history: list[dict]) -> str | None:
         if not self.store or message.guild is None:
@@ -535,7 +535,8 @@ class Dave(discord.Client):
                 found = image_attachments(message) or await recent_images(message)
                 images = await load_images(found, self.http)
                 parts = [settings_line(data, guild.id) if data else None, DM_HINT.format(name=name, guild=guild.name),
-                         style_hint(self.store, guild.id, message.author.id, name), length_hint(message.content or "")]
+                         style_hint(self.store, guild.id, message.author.id, name), length_hint(message.content or ""),
+                         FINAL_CHECK]
                 if self.store:  # nur Fakten über die Person selbst, keine Erinnerungen aus anderen Kanälen
                     parts.append(build_context(self.store, guild.id, [message.author.id],
                                                {message.author.id: name}, []))

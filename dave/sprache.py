@@ -18,6 +18,12 @@ REPHRASE = ("## Nicht verstanden\n"
             "2–3 kurze Sätze, Alltagswörter, kein Fachjargon, kein Witz. Keine Entschuldigungs-Arie, "
             "fang direkt mit der einfacheren Erklärung an.\nDeine letzte Antwort war: „{last}“")
 
+FINAL_CHECK = ("## Kurz-Check vor dem Antworten\n"
+               "Gehst du direkt auf das ein, was gerade gesagt wurde? Alltagssprache wie ein Kumpel im Chat? "
+               "Lass Roboter-Technik-Sprech weg (Kohlenstoff-Irgendwas, Sensoren, Prozessoren, Schaltkreise, "
+               "Protokolle, Algorithmen, Nullen und Einsen, Systemdiagnose) – auch wenn du früher im Verlauf so "
+               "geredet hast. Höchstens ein Witz.")
+
 SWITCH_INFO = "\n-# Ich red ab jetzt einfacher mit dir. Zurück geht's mit `/stil normal`."
 
 _CONFUSED = re.compile(
