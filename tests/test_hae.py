@@ -94,3 +94,26 @@ async def test_hae_without_dave_is_ignored(setup):
     msg = make_msg(bot, "hä?", ch, guild)
     await bot.on_message(msg)
     assert not msg.replies and not bot.brain.calls
+
+
+async def test_seed_memory_after_restart(setup):
+    bot, guild, ch = setup
+    bot._connection.user = None
+    older = [N(author=N(id=99, bot=True, display_name="Dave"), clean_content="Moin, was geht?", content="", guild=guild),
+             N(author=N(id=5, bot=False, display_name="Ben"), clean_content="Wir spielen Helldivers", content="",
+               guild=guild)]  # neueste zuerst, wie Discord es liefert
+
+    def history(limit, before, after):
+        async def gen():
+            for m in older:
+                yield m
+        return gen()
+
+    ch.history = history
+    bot.config = dataclasses.replace(bot.config, dave_channel_ids=frozenset({ch.id}))
+    msg = make_msg(bot, "ah ja sehr toll", ch, guild)
+    await bot.on_message(msg)
+    sent = bot.brain.calls[0]
+    texts = [e.text for e in bot.memory.recent(ch.id)]
+    assert texts[:2] == ["Wir spielen Helldivers", "ah ja sehr toll"]  # fremde Bots fliegen raus
+    assert sent and msg.replies

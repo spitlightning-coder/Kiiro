@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 from collections import defaultdict
+from datetime import timedelta
 from pathlib import Path
 
 import discord
@@ -521,6 +522,8 @@ class Dave(discord.Client):
             marker = "[schickt ein Bild]" if len(own_images) == 1 else f"[schickt {len(own_images)} Bilder]"
             text = f"{text} {marker}".strip()
         name = getattr(guild.get_member(message.author.id), "display_name", message.author.display_name)
+        if not self.memory.recent(channel_id):
+            await self._seed_memory(message)
         self.memory.add(channel_id, name, text)
         if self.store and (what := parse_merk_dir(text)):
             self.store.add_fact(guild.id, message.author.id, name, what, source="manuell")
@@ -581,6 +584,8 @@ class Dave(discord.Client):
         if own_images:
             marker = "[schickt ein Bild]" if len(own_images) == 1 else f"[schickt {len(own_images)} Bilder]"
             text = f"{text} {marker}".strip()
+        if not self.memory.recent(channel_id) and self._is_addressed(message):
+            await self._seed_memory(message)  # z.B. nach einem Neustart: sonst fehlt der Zusammenhang
         self.memory.add(channel_id, message.author.display_name, text)
         addressed = self._is_addressed(message)
         self._note(message, Line(message.author.id, message.author.display_name, text), addressed)
@@ -650,6 +655,28 @@ class Dave(discord.Client):
             self.memory.add(channel_id, "Dave", answer, from_dave=True)
             self._note(message, Line(None, "Dave", answer, from_dave=True), True)
 
+
+    async def _seed_memory(self, message: discord.Message, limit: int = 12) -> None:
+        """Holt die letzten Nachrichten aus Discord ins Kurzzeitgedächtnis (nur im Arbeitsspeicher)."""
+        after = discord.utils.utcnow() - timedelta(minutes=self.config.memory_minutes)
+        older = []
+        try:
+            async for m in message.channel.history(limit=limit, before=message, after=after):
+                older.append(m)
+        except (discord.HTTPException, AttributeError) as e:
+            log.info("Verlauf zum Aufwärmen nicht lesbar: %s", e)
+            return
+        for m in reversed(older):  # history liefert neueste zuerst
+            from_dave = self.user is not None and m.author.id == self.user.id
+            if m.author.bot and not from_dave:
+                continue
+            text = m.clean_content if m.guild else m.content
+            if text.strip():
+                self.memory.add(message.channel.id, "Dave" if from_dave else m.author.display_name, text,
+                                from_dave=from_dave)
+        if older:
+            log.info("Kurzzeitgedächtnis für #%s mit %d Nachrichten aufgewärmt",
+                     getattr(message.channel, "name", "privat"), len(older))
 
     async def _explain_simpler(self, message: discord.Message, last: str) -> None:
         guild, channel_id = message.guild, message.channel.id

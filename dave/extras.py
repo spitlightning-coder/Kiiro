@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import random
 import re
@@ -277,7 +279,8 @@ async def refresh_role_message(guild: discord.Guild, data: ServerData, groups=()
                 pass
         stored = {}
         log.info("Rollen-Nachrichten in #%s werden neu sortiert", channel.name)
-    new_stored = {}
+    new_stored, new_sigs = {}, {}
+    sigs: dict = data.get(guild.id, "roles_sigs", {}) if stored else {}
     for n, (title, roles) in enumerate(grouped):
         embed = discord.Embed(title=f"{title}", color=GROUP_COLORS[n % len(GROUP_COLORS)])
         if roles:
@@ -289,18 +292,22 @@ async def refresh_role_message(guild: discord.Guild, data: ServerData, groups=()
         if n == 0:
             embed.set_author(name="「👫」Such dir deine Rollen aus")
         view = role_buttons(guild, [r.id for r in roles], [(title, [r.name for r in roles])])
+        sig = hashlib.sha1(json.dumps([embed.to_dict(), [(r.id, r.name) for r in roles]], sort_keys=True,
+                                      ensure_ascii=False).encode()).hexdigest()[:16]
         msg = None
         mid = stored.get(title)
         if mid:
             try:
                 msg = await channel.fetch_message(mid)
-                await msg.edit(embed=embed, view=view)
+                if sigs.get(title) != sig:  # nur bearbeiten, wenn sich wirklich was geändert hat (spart Rate-Limits)
+                    await msg.edit(embed=embed, view=view)
             except discord.HTTPException:
                 msg = None
         if msg is None:
             msg = await channel.send(embed=embed, view=view)
             log.info("Rollen-Nachricht „%s“ in #%s angelegt", title, channel.name)
         new_stored[title] = msg.id
+        new_sigs[title] = sig
     for title, mid in stored.items():  # Gruppen, die es nicht mehr gibt
         if title not in new_stored:
             try:
@@ -308,6 +315,7 @@ async def refresh_role_message(guild: discord.Guild, data: ServerData, groups=()
             except discord.HTTPException:
                 pass
     data.set(guild.id, "roles_messages", new_stored)
+    data.set(guild.id, "roles_sigs", new_sigs)
 
 
 def register_fun(tree: app_commands.CommandTree) -> None:
