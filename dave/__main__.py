@@ -43,11 +43,13 @@ def main() -> None:
     (log_dir / "dave.pid").write_text(str(os.getpid()), encoding="utf-8")
     config = Config.from_env()
     if config.provider == "openai":
-        from .brain_openai import OpenAIBrain
-
+        from .brain_openai import OpenAIBrain, Provider
         from .providers import fallbacks_from_env, find_ollama, verify
 
         models = [m.strip() for m in config.model.split(",") if m.strip()]
+        checked = verify(Provider("haupt", config.api_base, config.api_key, list(models)))
+        if checked and checked.models:  # unbekannte Modelle gar nicht erst versuchen
+            models = checked.models
         fallbacks = [p for p in (verify(p) for p in fallbacks_from_env()) if p]
         if os.getenv("DAVE_OLLAMA", "auto").strip().lower() != "aus":
             ollama = find_ollama(os.getenv("DAVE_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/"),

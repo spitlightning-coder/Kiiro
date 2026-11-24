@@ -43,6 +43,13 @@ def with_images(messages: list[dict], images: list[tuple[str, bytes]]) -> list[d
     return [*messages[:-1], {**last, "content": parts}]
 
 
+def request_extras(provider: "Provider", model: str) -> dict:
+    """Gemini-Flash (nicht Lite) denkt sonst lange nach – für Chat reicht wenig Nachdenken."""
+    if "googleapis" in provider.base_url and "flash" in model and "lite" not in model:
+        return {"reasoning_effort": "low"}
+    return {}
+
+
 @dataclass
 class Provider:
     """Ein OpenAI-kompatibler Anbieter (Requesty, Groq, Gemini, OpenRouter, lokales Ollama …)."""
@@ -57,7 +64,8 @@ class Provider:
 COOLDOWN_LIMIT = 10 * 60   # nach "Limit erreicht" so lange überspringen
 COOLDOWN_ERROR = 2 * 60    # nach Verbindungsfehler so lange überspringen
 COOLDOWN_BUSY = 5 * 60     # Modell überlastet (503) oder Zeitlimit -> so lange auslassen
-HEDGE_AFTER = 6.0          # so lange auf eine Antwort warten, bevor parallel ein zweiter Kandidat gefragt wird
+TEMPERATURE = 0.7          # etwas weniger Zufall: weniger wilde Nonsens-Witze
+HEDGE_AFTER = 8.0          # so lange auf eine Antwort warten, bevor parallel ein zweiter Kandidat gefragt wird
 
 
 class OpenAIBrain:
@@ -136,7 +144,8 @@ class OpenAIBrain:
         started = time.monotonic()
         try:
             response = await provider.client.chat.completions.create(
-                model=model, messages=messages, max_tokens=max_tokens,
+                model=model, messages=messages, max_tokens=max_tokens, temperature=TEMPERATURE,
+                **request_extras(provider, model),
             )
         except openai.RateLimitError:
             log.warning("%s: Limit erreicht bei %s", provider.name, model)

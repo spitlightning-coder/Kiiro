@@ -81,6 +81,9 @@ def verify(provider: Provider, timeout: float = 6) -> Provider | None:
     missing = [m for m in provider.models if m not in available]
     if missing:
         log.warning("%s: diese Modelle gibt es nicht: %s", provider.name, ", ".join(missing))
+        similar = sorted(a for a in available if any(w in a for w in ("flash", "gemma", "pro")))[:15]
+        if similar:
+            log.info("%s: verfügbar wären z.B.: %s", provider.name, ", ".join(similar))
     if not ok:
         log.error("%s: keins der Modelle verfügbar – Reserve deaktiviert", provider.name)
         return None

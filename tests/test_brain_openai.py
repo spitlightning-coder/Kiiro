@@ -74,3 +74,19 @@ def test_clean_strips_think_and_prefix():
     assert clean("<think>hmm</think>\nDave: Jo.") == "Jo."
     assert clean("bla bla</think>Antwort") == "Antwort"
     assert clean("**Dave:** Hi") == "Hi"
+
+
+def test_request_extras_only_for_gemini_flash():
+    from dave.brain_openai import Provider, request_extras
+
+    g = Provider("gemini", "https://generativelanguage.googleapis.com/v1beta/openai/", "k", [])
+    r = Provider("requesty", "https://router.requesty.ai/v1", "k", [])
+    assert request_extras(g, "gemini-3.5-flash") == {"reasoning_effort": "low"}
+    assert request_extras(g, "gemini-3.5-flash-lite") == {}
+    assert request_extras(r, "google/gemini-3.5-flash") == {}
+
+
+async def test_sends_temperature():
+    b, fake = make(resp("ok"))
+    await b.reply(HIST, server="S", channel="c")
+    assert fake.calls[0]["temperature"] == 0.7

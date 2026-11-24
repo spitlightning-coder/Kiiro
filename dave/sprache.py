@@ -22,7 +22,8 @@ FINAL_CHECK = ("## Kurz-Check vor dem Antworten\n"
                "Gehst du direkt auf das ein, was gerade gesagt wurde? Alltagssprache wie ein Kumpel im Chat? "
                "Lass Roboter-Technik-Sprech weg (Kohlenstoff-Irgendwas, Sensoren, Prozessoren, Schaltkreise, "
                "Protokolle, Algorithmen, Nullen und Einsen, Systemdiagnose) – auch wenn du früher im Verlauf so "
-               "geredet hast. Höchstens ein Witz.")
+               "geredet hast. Ergibt deine Antwort Sinn und passt sie zum Gesagten? Lieber normal und klar als ein "
+               "schräger Witz – höchstens einer, und nur wenn er wirklich passt.")
 
 SWITCH_INFO = "\n-# Ich red ab jetzt einfacher mit dir. Zurück geht's mit `/stil normal`."
 
