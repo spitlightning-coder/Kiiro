@@ -20,6 +20,7 @@ KNOWN = {
     "cerebras": "https://api.cerebras.ai/v1",
     "mistral": "https://api.mistral.ai/v1",
 }
+USER_AGENT = "Dave-Discord-Bot/1.0 (+https://github.com/spitlightning-coder/Kiiro)"
 OLLAMA_PREFERRED = ("qwen3", "llama3", "gemma3", "gemma", "mistral", "qwen2.5", "phi")
 
 
@@ -61,15 +62,20 @@ def find_ollama(url: str = "http://127.0.0.1:11434", wanted: str = "") -> Provid
 def verify(provider: Provider, timeout: float = 6) -> Provider | None:
     """Fragt die Modell-Liste ab (kostet kein Kontingent). Unbekannte Modelle fliegen raus.
     Schlüssel falsch -> None. Liste nicht abrufbar -> Anbieter bleibt unverändert drin."""
+    # Eigener User-Agent: Groq (Cloudflare) blockt den Standard "Python-urllib" mit 403 (Fehler 1010)
     req = urllib.request.Request(provider.base_url.rstrip("/") + "/models",
-                                 headers={"Authorization": f"Bearer {provider.api_key}"})
+                                 headers={"Authorization": f"Bearer {provider.api_key}", "User-Agent": USER_AGENT,
+                                          "Accept": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             available = {m.get("id", "").removeprefix("models/") for m in json.load(r).get("data", [])}
     except urllib.error.HTTPError as e:
-        if e.code in (401, 403):
-            log.error("%s: Schlüssel wird abgelehnt (HTTP %s) – Reserve deaktiviert", provider.name, e.code)
+        if e.code == 401:
+            log.error("%s: Schlüssel wird abgelehnt (HTTP 401) – Reserve deaktiviert", provider.name)
             return None
+        if e.code == 403:  # kann auch eine Firewall/Cloudflare sein – im Betrieb merkt Dave, ob es geht
+            log.warning("%s: Modell-Liste verweigert (HTTP 403), probiere den Anbieter trotzdem", provider.name)
+            return provider
         log.warning("%s: Modell-Liste nicht abrufbar (HTTP %s), nutze sie trotzdem", provider.name, e.code)
         return provider
     except Exception as e:  # noqa: BLE001
