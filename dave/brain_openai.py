@@ -65,7 +65,7 @@ COOLDOWN_LIMIT = 10 * 60   # nach "Limit erreicht" so lange überspringen
 COOLDOWN_ERROR = 2 * 60    # nach Verbindungsfehler so lange überspringen
 COOLDOWN_BUSY = 5 * 60     # Modell überlastet (503) oder Zeitlimit -> so lange auslassen
 TEMPERATURE = 0.7          # etwas weniger Zufall: weniger wilde Nonsens-Witze
-HEDGE_AFTER = 8.0          # so lange auf eine Antwort warten, bevor parallel ein zweiter Kandidat gefragt wird
+HEDGE_AFTER = 5.0          # so lange auf eine Antwort warten, bevor parallel ein zweiter Kandidat gefragt wird
 
 
 class OpenAIBrain:
@@ -130,15 +130,14 @@ class OpenAIBrain:
         return await self._ask(messages, self.max_tokens)
 
     def _next(self, tried: set, skipped: set, busy_providers: set) -> tuple[Provider, str] | None:
-        """Nächster Kandidat (Anbieter, Modell). Beim Absichern lieber ein anderer Anbieter als der, der gerade hängt."""
+        """Nächster Kandidat (Anbieter, Modell) in der eingestellten Reihenfolge."""
         now = self._clock()
         options = [(p, m) for p in self.providers for m in p.models
                    if (p.name, m) not in tried and p.name not in skipped
                    and self.cooldown.get(p.name, 0) <= now and self.model_cooldown.get((p.name, m), 0) <= now]
         if not options:
             return None
-        other = [o for o in options if o[0].name not in busy_providers]
-        return (other or options)[0]
+        return options[0]  # einfach der Reihe nach: die schnellen Modelle stehen vorne
 
     async def _try(self, provider: Provider, model: str, messages: list[dict], max_tokens: int) -> tuple[str, str]:
         started = time.monotonic()

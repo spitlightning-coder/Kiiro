@@ -67,39 +67,35 @@ def test_fallbacks_from_env():
     assert p.name == "groq" and p.base_url == "https://api.groq.com/openai/v1" and p.models == ["a", "b"]
 
 
-class Slow(Fake):
-    def __init__(self, delay, *outcomes):
-        super().__init__(*outcomes)
-        self.delay, self.cancelled = delay, False
-
-    async def create(self, **kw):
-        import asyncio
-
-        self.calls.append(kw["model"])
-        try:
-            await asyncio.sleep(self.delay)
-        except asyncio.CancelledError:
-            self.cancelled = True
-            raise
-        return resp("langsam")
-
-
 def busy():
     req = httpx.Request("POST", "https://x/v1/chat/completions")
     return openai.InternalServerError("overloaded", response=httpx.Response(503, request=req), body=None)
 
 
-async def test_hedges_to_reserve_when_main_hangs():
-    main = Slow(5)
-    reserve = Fake(resp("schnell von der Reserve"))
-    b, _ = make(main, reserve)
-    b.hedge_after = 0.05
-    assert await b.reply(HIST, server="S", channel="c") == "schnell von der Reserve"
-    assert main.calls == ["m1"] and reserve.calls == ["rm"]  # Reserve statt m2 desselben Anbieters
+async def test_hedges_to_next_model_when_first_hangs():
     import asyncio
 
+    class PerModel(Fake):
+        cancelled = False
+
+        async def create(self, **kw):
+            self.calls.append(kw["model"])
+            if kw["model"] == "m1":
+                try:
+                    await asyncio.sleep(5)
+                except asyncio.CancelledError:
+                    PerModel.cancelled = True
+                    raise
+            return resp(f"Antwort von {kw['model']}")
+
+    main = PerModel()
+    reserve = Fake(resp("Reserve"))
+    b, _ = make(main, reserve)
+    b.hedge_after = 0.05
+    assert await b.reply(HIST, server="S", channel="c") == "Antwort von m2"
+    assert main.calls == ["m1", "m2"] and reserve.calls == []
     await asyncio.sleep(0)  # Abbruch des hängenden Aufrufs greift im nächsten Schritt der Event-Loop
-    assert main.cancelled
+    assert PerModel.cancelled
 
 
 async def test_busy_model_is_skipped_for_a_while():
