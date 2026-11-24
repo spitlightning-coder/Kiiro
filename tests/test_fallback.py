@@ -109,3 +109,33 @@ async def test_busy_model_is_skipped_for_a_while():
     t[0] += COOLDOWN_BUSY + 1
     await b.reply(HIST, server="S", channel="c")
     assert main.calls[-1] == "m1"
+
+
+async def test_hedge_prefers_fastest_other_provider():
+    import asyncio
+
+    class Hang(Fake):
+        async def create(self, **kw):
+            self.calls.append(kw["model"])
+            await asyncio.sleep(5)
+
+    main = Hang()
+    slow, fast = Fake(resp("lahm")), Fake(resp("flott"))
+    b, _ = make(main, slow, fast)
+    b.hedge_after = 0.05
+    b.speed = {"r0": 20.0, "r1": 0.8}
+    assert await b.reply(HIST, server="S", channel="c") == "flott"
+    assert slow.calls == [] and fast.calls == ["rm"]
+
+
+async def test_gone_model_is_skipped_long():
+    from dave.brain_openai import COOLDOWN_BUSY
+
+    req = httpx.Request("POST", "https://x/v1/chat/completions")
+    gone = openai.NotFoundError("gone", response=httpx.Response(404, request=req), body=None)
+    main = Fake(gone, resp("m2"))
+    b, t = make(main)
+    assert await b.reply(HIST, server="S", channel="c") == "m2"
+    t[0] += COOLDOWN_BUSY + 1
+    await b.reply(HIST, server="S", channel="c")
+    assert main.calls == ["m1", "m2", "m2"]

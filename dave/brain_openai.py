@@ -63,6 +63,8 @@ class Provider:
 
 COOLDOWN_LIMIT = 10 * 60   # nach "Limit erreicht" so lange überspringen
 COOLDOWN_ERROR = 2 * 60    # nach Verbindungsfehler so lange überspringen
+COOLDOWN_GONE = 6 * 3600   # Modell gibt's nicht (mehr)
+FAST_ENOUGH = 4.0          # so schnell muss ein Anbieter zuletzt gewesen sein, um beim Absichern vorzuziehen
 COOLDOWN_BUSY = 5 * 60     # Modell überlastet (503) oder Zeitlimit -> so lange auslassen
 TEMPERATURE = 0.7          # etwas weniger Zufall: weniger wilde Nonsens-Witze
 HEDGE_AFTER = 5.0          # so lange auf eine Antwort warten, bevor parallel ein zweiter Kandidat gefragt wird
@@ -88,6 +90,7 @@ class OpenAIBrain:
         self.cooldown: dict[str, float] = {}
         self.model_cooldown: dict[tuple[str, str], float] = {}
         self._inflight = 0
+        self.speed: dict[str, float] = {}  # gleitender Schnitt der Antwortzeit pro Anbieter
         self.hedge_after = HEDGE_AFTER
         self.used: dict[str, int] = {p.name: 0 for p in self.providers}
 
@@ -159,7 +162,15 @@ class OpenAIBrain:
                    and self.cooldown.get(p.name, 0) <= now and self.model_cooldown.get((p.name, m), 0) <= now]
         if not options:
             return None
-        return options[0]  # einfach der Reihe nach: die schnellen Modelle stehen vorne
+        if not busy_providers:
+            return options[0]  # erster Versuch: eingestellte Reihenfolge
+        # Absichern, weil einer hängt: ein anderer Anbieter, der sich zuletzt als flott erwiesen hat –
+        # sonst einfach das nächste Modell der Reihe nach (lahme Reserven wie Requesty kommen erst am Ende)
+        fast = [o for o in options if o[0].name not in busy_providers
+                and self.speed.get(o[0].name, float("inf")) < FAST_ENOUGH]
+        if fast:
+            return min(fast, key=lambda o: (self.speed[o[0].name], fast.index(o)))
+        return options[0]
 
     async def _try(self, provider: Provider, model: str, messages: list[dict], max_tokens: int) -> tuple[str, str]:
         started = time.monotonic()
@@ -181,6 +192,8 @@ class OpenAIBrain:
                 return "skip", ""
             if e.status_code >= 500:  # überlastet -> dieses Modell ein paar Minuten auslassen
                 self.model_cooldown[(provider.name, model)] = self._clock() + COOLDOWN_BUSY
+            elif e.status_code == 404:  # Modell gibt's (nicht mehr) -> lange auslassen
+                self.model_cooldown[(provider.name, model)] = self._clock() + COOLDOWN_GONE
             return "error", ""
         except openai.APITimeoutError:
             log.error("%s: %s antwortet nicht (Zeitlimit)", provider.name, model)
@@ -198,7 +211,10 @@ class OpenAIBrain:
         if choice.finish_reason == "length":
             text += " …"
         self.used[provider.name] = self.used.get(provider.name, 0) + 1
-        log.info("Antwort von %s/%s in %.1f s", provider.name, model, time.monotonic() - started)
+        took = time.monotonic() - started
+        old = self.speed.get(provider.name)
+        self.speed[provider.name] = took if old is None else 0.7 * old + 0.3 * took
+        log.info("Antwort von %s/%s in %.1f s", provider.name, model, took)
         if provider is not self.providers[0]:
             log.info("Antwort kam von Reserve %s (%s)", provider.name, model)
         return "ok", text
