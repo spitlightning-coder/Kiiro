@@ -11,11 +11,13 @@ Fehlt ChromaDB oder klappt es nicht, läuft alles andere trotzdem (nur ohne Ähn
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 import threading
 import time
 import uuid
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 
 log = logging.getLogger("dave.longterm")
@@ -91,6 +93,23 @@ def _clip(text: str) -> str:
     return text[:MAX_TEXT]
 
 
+def embed_threads() -> int:
+    """Wie viele Kerne wir wirklich haben (Container-Limit beachten), höchstens 2."""
+    cpus = None
+    try:
+        quota, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()[:2]
+        if quota != "max":
+            cpus = max(1, int(int(quota) / int(period)))
+    except (OSError, ValueError):
+        pass
+    if cpus is None:
+        try:
+            cpus = len(os.sched_getaffinity(0))
+        except (AttributeError, OSError):
+            cpus = os.cpu_count() or 1
+    return max(1, min(2, cpus))
+
+
 def default_embedding(model_dir: Path):
     """Chromas Standard-Embedding, aber mit dauerhaftem Modell-Ordner und einmal geladenem Modell.
 
@@ -103,6 +122,25 @@ def default_embedding(model_dir: Path):
 
     ONNXMiniLM_L6_V2.DOWNLOAD_PATH = Path(model_dir) / ONNXMiniLM_L6_V2.MODEL_NAME
 
+    class FewThreads(ONNXMiniLM_L6_V2):
+        """Wie das Original, aber mit wenigen Rechen-Threads.
+
+        onnxruntime startet sonst so viele Threads, wie der Host Kerne hat – in einem Container mit 1-2 echten
+        Kernen bremsen die sich gegenseitig aus (aus 50 ms werden 10 s).
+        """
+
+        @cached_property
+        def model(self):
+            so = self.ort.SessionOptions()
+            so.log_severity_level = 3
+            so.graph_optimization_level = self.ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            so.intra_op_num_threads = embed_threads()
+            so.inter_op_num_threads = 1
+            so.execution_mode = self.ort.ExecutionMode.ORT_SEQUENTIAL
+            return self.ort.InferenceSession(
+                os.path.join(self.DOWNLOAD_PATH, self.EXTRACTED_FOLDER_NAME, "model.onnx"),
+                providers=["CPUExecutionProvider"], sess_options=so)
+
     class CachedDefault(DefaultEmbeddingFunction):
         _model = None
         _model_lock = threading.Lock()
@@ -110,8 +148,13 @@ def default_embedding(model_dir: Path):
         def __call__(self, input):  # noqa: A002 – Name von Chroma vorgegeben
             with self._model_lock:
                 if CachedDefault._model is None:
-                    CachedDefault._model = ONNXMiniLM_L6_V2()
-            return CachedDefault._model(input)
+                    CachedDefault._model = FewThreads()
+            started = time.monotonic()
+            out = CachedDefault._model(input)
+            took = time.monotonic() - started
+            if took > 1:
+                log.info("Embedding für %d Text(e) dauerte %.1f s", len(input), took)
+            return out
 
     return CachedDefault()
 

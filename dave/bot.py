@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from collections import defaultdict
 from datetime import timedelta
 from pathlib import Path
@@ -633,7 +634,11 @@ class Dave(discord.Client):
                 images = await load_images(found, self.http)
                 if found and not images:
                     log.warning("%d Bild(er) gefunden, aber keins ließ sich laden", len(found))
+                started = time.monotonic()
                 context = await self._context(message, history)
+                took = time.monotonic() - started
+                if took > 1:
+                    log.info("Kontext (Gedächtnis, Server-Lage) zusammenstellen dauerte %.1f s", took)
                 extra = {"images": images} if images else {}
                 answer = await self.brain.reply(
                     history,
