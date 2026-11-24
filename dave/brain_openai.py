@@ -66,6 +66,7 @@ class Provider:
 COOLDOWN_LIMIT = 10 * 60   # nach "Limit erreicht" so lange überspringen
 COOLDOWN_ERROR = 2 * 60    # nach Verbindungsfehler so lange überspringen
 COOLDOWN_GONE = 6 * 3600   # Modell gibt's nicht (mehr)
+KNOWN_FAST = {"groq": 1.0, "cerebras": 1.0}  # extrem schnelle Anbieter (eigene Chips)
 FAST_ENOUGH = 4.0          # so schnell muss ein Anbieter zuletzt gewesen sein, um beim Absichern vorzuziehen
 COOLDOWN_BUSY = 5 * 60     # Modell überlastet (503) oder Zeitlimit -> so lange auslassen
 TEMPERATURE = 0.7          # etwas weniger Zufall: weniger wilde Nonsens-Witze
@@ -92,7 +93,8 @@ class OpenAIBrain:
         self.cooldown: dict[str, float] = {}
         self.model_cooldown: dict[tuple[str, str], float] = {}
         self._inflight = 0
-        self.speed: dict[str, float] = {}  # gleitender Schnitt der Antwortzeit pro Anbieter
+        # gleitender Schnitt der Antwortzeit pro Anbieter; bekannt flotte Anbieter starten mit Vorschuss
+        self.speed: dict[str, float] = {p.name: KNOWN_FAST[p.name] for p in self.providers if p.name in KNOWN_FAST}
         self.hedge_after = HEDGE_AFTER
         self.used: dict[str, int] = {p.name: 0 for p in self.providers}
 

@@ -145,10 +145,10 @@ def test_server_info_lists_only_public_channels(setup):
     bot, _guild, _ch = setup
 
     def chan(name, public):
-        return N(name=name, permissions_for=lambda who: N(view_channel=public))
+        return N(name=name, id=len(name), permissions_for=lambda who: N(view_channel=public))
     guild = N(name="Ultramegabomba", member_count=23, default_role="everyone",
               text_channels=[chan("main-chat", True), chan("ratssitzung", False)],
               voice_channels=[chan("Gaming", True)])
     info = bot.server_info(guild)
-    assert "23 Mitglieder" in info and "#main-chat" in info and "ratssitzung" not in info
+    assert "23 Mitglieder" in info and "main-chat = <#9>" in info and "ratssitzung" not in info
     assert "Textkanäle (1)" in info and "Sprachkanäle (1)" in info

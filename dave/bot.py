@@ -698,7 +698,9 @@ class Dave(discord.Client):
         members = getattr(guild, "member_count", None)
         line = f"## Der Server\n„{guild.name}“" + (f", {members} Mitglieder" if members else "") + "."
         if texts:
-            line += f"\nÖffentliche Textkanäle ({len(texts)}): " + ", ".join(f"#{c.name}" for c in texts)
+            line += f"\nÖffentliche Textkanäle ({len(texts)}): " + ", ".join(f"{c.name} = <#{c.id}>" for c in texts)
+            line += ("\nWenn du einen Kanal nennst, schreib ihn genau als <#Nummer> (z.B. <#123>) – "
+                     "dann macht Discord daraus einen anklickbaren Link mit dem richtigen Namen.")
         if voices:
             line += f"\nÖffentliche Sprachkanäle ({len(voices)}): " + ", ".join(c.name for c in voices)
         return line
