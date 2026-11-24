@@ -80,6 +80,15 @@ CREATE TABLE IF NOT EXISTS starboard (
     board_message_id INTEGER NOT NULL,
     PRIMARY KEY (guild_id, message_id)
 );
+CREATE TABLE IF NOT EXISTS game_scores (
+    guild_id INTEGER NOT NULL,
+    game TEXT NOT NULL,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    wins INTEGER NOT NULL DEFAULT 0,
+    played INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, game, user_id)
+);
 CREATE TABLE IF NOT EXISTS quiz_scores (
     guild_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
@@ -361,6 +370,23 @@ class ServerData:
         with self._lock:
             return self.db.execute("SELECT name, points, correct, answered FROM quiz_scores WHERE guild_id = ? "
                                    "ORDER BY points DESC, correct DESC LIMIT ?", (guild_id, limit)).fetchall()
+
+    # ---------- Ranglisten für Mini-Spiele (Sabacc, Emoji-Rätsel …) ----------
+
+    def add_game_result(self, guild_id: int, game: str, user_id: int, name: str, won: bool) -> None:
+        with self._lock:
+            self.db.execute(
+                "INSERT INTO game_scores (guild_id, game, user_id, name, wins, played) VALUES (?, ?, ?, ?, ?, 1) "
+                "ON CONFLICT(guild_id, game, user_id) DO UPDATE SET name = excluded.name, "
+                "wins = wins + excluded.wins, played = played + 1",
+                (guild_id, game, user_id, name[:64], int(won)))
+            self.db.commit()
+
+    def game_top(self, guild_id: int, game: str, limit: int = 10) -> list[tuple[str, int, int]]:
+        """[(Name, Siege, Spiele)] – meiste Siege zuerst."""
+        with self._lock:
+            return self.db.execute("SELECT name, wins, played FROM game_scores WHERE guild_id = ? AND game = ? "
+                                   "ORDER BY wins DESC, played ASC LIMIT ?", (guild_id, game, limit)).fetchall()
 
     # ---------- News ----------
 

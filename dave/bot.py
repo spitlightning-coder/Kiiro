@@ -27,6 +27,8 @@ from .longterm import MemoryStore
 from .memory import ChannelMemory
 from .freegames import FreeGames
 from .games import Hangmen, register_games
+from .minigames import EmojiRiddles, register_minigames
+from .sabacc import register_sabacc
 from .guard import AntiSpam, HallOfFame, register_guard
 from .news import News
 from .proactive import Proactive
@@ -211,7 +213,10 @@ class Dave(discord.Client):
             register_guard(self.tree, server, self.actions)
         self.hangmen = Hangmen()
         register_games(self.tree, self.hangmen)
+        self.riddles = EmojiRiddles(server, brain) if server else None
         if server:
+            register_sabacc(self.tree, server)
+            register_minigames(self.tree, server, self.riddles)
             register_wortel(self.tree, server)
             register_quotes(self.tree, server)
         if server:
@@ -582,6 +587,8 @@ class Dave(discord.Client):
             return  # Counting-Kanal: nur zählen, nicht quatschen
         if await self.hangmen.handle(message):
             return  # Galgenmännchen-Rateversuch
+        if self.riddles and await self.riddles.handle(message):
+            return  # Emoji-Rätsel-Rateversuch
 
         channel_id = message.channel.id
         text = message.clean_content

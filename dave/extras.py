@@ -29,7 +29,8 @@ HILFE = """💬 **Reden:** @Dave erwähnen, auf seine Nachricht antworten oder e
 🔊 **Eigener Raum:** Betritt „「➕」Raum erstellen“ und du bekommst deinen eigenen Sprachkanal
 📝 **Verpasst?** `/verpasst` – Dave fasst zusammen, was hier los war
 🧠 **Quiz:** `/quiz` (Thema frei wählbar) · `/quiz_rangliste`
-🕹️ **Spiele:** `/galgen` (alle raten im Chat) · `/tictactoe` (gegen Dave oder jemanden) · `/ssp`
+🕹️ **Spiele:** `/galgen` (alle raten im Chat) · `/tictactoe` (gegen Dave oder jemanden) · `/ssp` · `/minesweeper`
+🃏 **Sabacc:** `/sabacc` – klassisches Sabacc gegen Dave, nah an ±23 (`/sabacc regeln:True` erklärt's) · 🧩 `/emoji_raetsel` – wer's zuerst errät · `/rangliste`
 🔤 **Worträtsel:** jeden Tag ein neues Wort – `/wort`, `/raten`, `/wort_rangliste`
 🎂 **Geburtstage:** `/geburtstag 24.12.` · `/geburtstage` – Dave gratuliert am Tag
 ⭐ **Hall of Fame:** Nachrichten mit genug ⭐-Reaktionen landen in 「⭐」hall-of-fame
